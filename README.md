@@ -29,3 +29,5 @@ This script will :
 Note : it requires to load the whole dataset in memory, so approximately 70GB of RAM is needed.
 
 ## Continual pretraining of the model
+
+To run pretraining, we adapted the HuggingFace Transformers `run_mlm.py` script , so that we can filter the dataset before training. We also removed the parts that requires internet communication so that it can run offline (for distributed running on a SLURM cluster for example).
