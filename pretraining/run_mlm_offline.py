@@ -284,11 +284,6 @@ def main():
         data_args.dataset_name
     )
 
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.
-
-    # Load pretrained model and tokenizer
-    #
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
@@ -309,7 +304,6 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script. "
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
-
     if model_args.model_name_or_path:
         model = AutoModelForMaskedLM.from_pretrained(
             model_args.model_name_or_path,
@@ -345,8 +339,30 @@ def main():
             load_from_cache_file=not data_args.overwrite_cache,
             desc=f"Filtering examples where {data_args.filter_lower_threshold} <= {data_args.filter_metric} <= {data_args.filter_upper_threshold}",
         )
+    
+    # Remove filtering metrics columns
+    columns_to_keep = [
+        "input_ids",
+        "token_type_ids",
+        "attention_mask",
+        "special_tokens_mask",
+    ]
+    if training_args.do_train:
+        if "train" not in tokenized_datasets:
+            raise ValueError("--do_train requires a train dataset")
+        tokenized_datasets["train"] = tokenized_datasets["train"].remove_columns(
+            [c for c in tokenized_datasets["train"].column_names
+             if c not in columns_to_keep]
+        )
+    if training_args.do_eval:
+        if "validation" not in tokenized_datasets:
+            raise ValueError("--do_eval requires a validation dataset")
+        tokenized_datasets["validation"] = tokenized_datasets["validation"].remove_columns(
+            [c for c in tokenized_datasets["validation"].column_names 
+             if c not in columns_to_keep]
+        )
         
-
+    # Define the maximum sequence length
     if data_args.max_seq_length is None:
         max_seq_length = tokenizer.model_max_length
         if max_seq_length > 1024:
@@ -399,16 +415,12 @@ def main():
     
 
     if training_args.do_train:
-        if "train" not in tokenized_datasets:
-            raise ValueError("--do_train requires a train dataset")
         train_dataset = tokenized_datasets["train"]
         if data_args.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
-        if "validation" not in tokenized_datasets:
-            raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = tokenized_datasets["validation"]
         if data_args.max_eval_samples is not None:
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
