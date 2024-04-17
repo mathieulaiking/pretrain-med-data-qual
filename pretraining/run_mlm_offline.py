@@ -49,7 +49,6 @@ from transformers.utils.versions import require_version
 
 # jean-zay personal imports
 import idr_torch
-import wandb
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -151,7 +150,6 @@ class DataTrainingArguments:
             )
         },
     )
-    streaming: bool = field(default=False, metadata={"help": "Enable streaming mode"})
     filter_metric: Optional[str] = field(
         default=None,
         metadata={
@@ -197,8 +195,6 @@ class DataTrainingArguments:
         metadata={"help": "Run Name for Weights and Biases"}
     )
     def __post_init__(self):
-        if self.streaming:
-            require_version("datasets>=2.0.0", "The streaming feature requires `datasets>=2.0.0`")
         if self.dataset_name is None :
             raise ValueError("Need either a dataset path")
         if self.filter_metric is not None and self.filter_metric not in ["sjr", "h-index","random"]:
@@ -338,27 +334,18 @@ def main():
         # must not be batched as we want to check each example
         def metric_filter(examples, metric, lower_threshold, upper_threshold):
             return lower_threshold <= examples[metric] <= upper_threshold
-        if not data_args.streaming:
-            tokenized_datasets = tokenized_datasets.filter(
-                metric_filter,
-                fn_kwargs={
-                    "metric": data_args.filter_metric,
-                    "lower_threshold": data_args.filter_lower_threshold,
-                    "upper_threshold": data_args.filter_upper_threshold,
-                },
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc=f"Filtering examples where {data_args.filter_lower_threshold} <= {data_args.filter_metric} <= {data_args.filter_upper_threshold}",
-            )
-        else:
-            tokenized_datasets = tokenized_datasets.filter(
-                metric_filter,
-                fn_kwargs={
-                    "metric": data_args.filter_metric,
-                    "lower_threshold": data_args.filter_lower_threshold,
-                    "upper_threshold": data_args.filter_upper_threshold,
-                },
-            )
+        tokenized_datasets = tokenized_datasets.filter(
+            metric_filter,
+            fn_kwargs={
+                "metric": data_args.filter_metric,
+                "lower_threshold": data_args.filter_lower_threshold,
+                "upper_threshold": data_args.filter_upper_threshold,
+            },
+            num_proc=data_args.preprocessing_num_workers,
+            load_from_cache_file=not data_args.overwrite_cache,
+            desc=f"Filtering examples where {data_args.filter_lower_threshold} <= {data_args.filter_metric} <= {data_args.filter_upper_threshold}",
+        )
+        
 
     if data_args.max_seq_length is None:
         max_seq_length = tokenizer.model_max_length
@@ -401,21 +388,14 @@ def main():
         return result
 
     with training_args.main_process_first(desc="grouping texts together"):
-        if not data_args.streaming:
-            tokenized_datasets = tokenized_datasets.map(
-                group_tokens_and_pad,
-                batched=True,
-                batch_size=1024,
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc=f"Grouping texts in chunks of {max_seq_length}",
-            )
-        else:
-            tokenized_datasets = tokenized_datasets.map(
-                group_tokens_and_pad,
-                batched=True,
-                batch_size=1024,   
-            )
+        tokenized_datasets = tokenized_datasets.map(
+            group_tokens_and_pad,
+            batched=True,
+            batch_size=1024,
+            num_proc=data_args.preprocessing_num_workers,
+            load_from_cache_file=not data_args.overwrite_cache,
+            desc=f"Grouping texts in chunks of {max_seq_length}",
+        ) 
     
 
     if training_args.do_train:
