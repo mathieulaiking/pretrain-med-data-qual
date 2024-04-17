@@ -8,7 +8,6 @@ slurm/*
 
 **.xml
 **.pyc
-**.ipynb
 **.png
 
 **/core-*

@@ -47,8 +47,9 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils.versions import require_version
 
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-# check_min_version("4.39.0")
+# jean-zay personal imports
+import idr_torch
+import wandb
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -187,6 +188,14 @@ class DataTrainingArguments:
         default=False, 
         metadata={"help": "Disable caching of the datasets"}
     )
+    wandb_group: Optional[str] = field(
+        default=None, 
+        metadata={"help": "Group name for Weights and Biases (distributed run = 1 group)"}
+    )
+    wandb_name: Optional[str] = field(
+        default=None, 
+        metadata={"help": "Run Name for Weights and Biases"}
+    )
     def __post_init__(self):
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires `datasets>=2.0.0`")
@@ -215,7 +224,16 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
+    
+    # set local rank to training arguments
+    training_args.local_rank = idr_torch.rank
+    
+    # setup wandb env variables
+    os.environ["WANDB_MODE"] = "offline"
+    os.environ["WANDB_PROJECT"] = "pretrain-med-data-qual"
+    os.environ["WANDB_RUN_GROUP"] = data_args.wandb_group
+    os.environ["WANDB_NAME"] = data_args.wandb_name
+    
     # disable progress bars (for file logging) 
     disable_progress_bars()
     if data_args.disable_caching:
@@ -227,17 +245,17 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+    if idr_torch.rank == 0 :
+        if training_args.should_log:
+            # The default of training_args.log_level is passive, so we set log level at info here to have that default.
+            transformers.utils.logging.set_verbosity_info()
 
-    if training_args.should_log:
-        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
-        transformers.utils.logging.set_verbosity_info()
-
-    log_level = training_args.get_process_log_level()
-    logger.setLevel(log_level)
-    datasets.utils.logging.set_verbosity(log_level)
-    transformers.utils.logging.set_verbosity(log_level)
-    transformers.utils.logging.enable_default_handler()
-    transformers.utils.logging.enable_explicit_format()
+        log_level = training_args.get_process_log_level()
+        logger.setLevel(log_level)
+        datasets.utils.logging.set_verbosity(log_level)
+        transformers.utils.logging.set_verbosity(log_level)
+        transformers.utils.logging.enable_default_handler()
+        transformers.utils.logging.enable_explicit_format()
 
     # Log on each process the small summary:
     logger.warning(
@@ -313,14 +331,6 @@ def main():
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
-    
-    # For debug purposes select number of examples also before filtering
-    if data_args.max_train_samples is not None:
-        max_train_samples = min(len(tokenized_datasets["train"]), data_args.max_train_samples)
-        tokenized_datasets["train"] = tokenized_datasets["train"].select(range(max_train_samples))
-    if data_args.max_eval_samples is not None:
-        max_eval_samples = min(len(tokenized_datasets["validation"]), data_args.max_eval_samples)
-        tokenized_datasets["validation"] = tokenized_datasets["validation"].select(range(max_eval_samples))
 
     # Preprocessing the datasets.
     # we filter according to text quality
@@ -482,10 +492,10 @@ def main():
             data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
-
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
+        if idr_torch.rank == 0:
+            trainer.log_metrics("train", metrics)
+            trainer.save_metrics("train", metrics)
+            trainer.save_state()
 
     # Evaluation
     if training_args.do_eval:
@@ -500,10 +510,9 @@ def main():
         except OverflowError:
             perplexity = float("inf")
         metrics["perplexity"] = perplexity
-
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
-
+        if idr_torch.rank == 0:
+            trainer.log_metrics("eval", metrics)
+            trainer.save_metrics("eval", metrics)
 
 
 if __name__ == "__main__":
