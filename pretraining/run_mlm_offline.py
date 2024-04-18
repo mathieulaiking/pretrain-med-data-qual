@@ -223,7 +223,7 @@ def main():
     
     # set local rank to training arguments
     training_args.local_rank = idr_torch.rank
-    
+    os.environ["OMP_NUM_THREADS"] = "8"
     # setup wandb env variables
     os.environ["WANDB_MODE"] = "offline"
     os.environ["WANDB_PROJECT"] = "pretrain-med-data-qual"
