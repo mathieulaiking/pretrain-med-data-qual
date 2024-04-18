@@ -235,6 +235,25 @@ def parse_args():
             "must be set when filter_metric is set"
         )
     )
+    parser.add_argument(
+        "--wandb_group",
+        type=str,
+        default="",
+        help="Group name for Weights and Biases (distributed run = 1 group)"
+    )
+    parser.add_argument(
+        "--wandb_name",
+        type=str,
+        default="",
+        help="Run Name for Weights and Biases"
+    )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="",
+        help="Project Name for Weights and Biases"
+    )
+
 
     args = parser.parse_args()
 
@@ -250,6 +269,12 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # setup wandb env variables
+    os.environ["WANDB_MODE"] = "offline"
+    os.environ["WANDB_PROJECT"] = args.wandb_project
+    os.environ["WANDB_RUN_GROUP"] = args.wandb_group
+    os.environ["WANDB_NAME"] = args.wandb_name
+    
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
     # in the environment
