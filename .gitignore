@@ -1,7 +1,8 @@
 **.ipynb_checkpoints/
 **__pycache__/
 .vscode/
-training/*/
+wandb/*
+pretraining/*/
 data/*/
 **/.cache/
 slurm/*
