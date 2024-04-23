@@ -436,18 +436,17 @@ def main():
         train_dataset = tokenized_datasets["train"]
         if data_args.max_train_samples is not None :
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            if not data_args.streaming : 
-                train_dataset = train_dataset.select(range(max_train_samples))
-            else : 
-                train_dataset = train_dataset.take(max_train_samples)
+            train_dataset = train_dataset.select(range(max_train_samples))
+        elif data_args.max_train_samples is not None and data_args.streaming :
+            train_dataset = train_dataset.take(data_args.max_train_samples)
+
     if training_args.do_eval:
         eval_dataset = tokenized_datasets["validation"]
-        if data_args.max_eval_samples is not None :
+        if data_args.max_eval_samples is not None and not data_args.streaming :
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            if not data_args.streaming : 
-                eval_dataset = eval_dataset.select(range(max_eval_samples))
-            else : 
-                eval_dataset = eval_dataset.take(max_eval_samples)
+            eval_dataset = eval_dataset.select(range(max_eval_samples))
+        elif data_args.max_eval_samples is not None and data_args.streaming :
+            eval_dataset = eval_dataset.take(data_args.max_eval_samples)
 
         def preprocess_logits_for_metrics(logits, labels):
             if isinstance(logits, tuple):
