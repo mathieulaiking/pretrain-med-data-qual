@@ -370,7 +370,10 @@ def main():
     # Streaming needed for large datasets because we encountered NCCL timeout error
     # but we stream after filtering because faster (and no error during filtering)
     if data_args.streaming:
-        tokenized_datasets = tokenized_datasets.to_iterable_dataset()
+        tokenized_datasets = datasets.IterableDatasetDict({
+            "train":tokenized_datasets["train"].to_iterable_dataset(num_shards=64),
+            "validation":tokenized_datasets["validation"].to_iterable_dataset(num_shards=64),
+        })
     # Define the maximum sequence length
     if data_args.max_seq_length is None:
         max_seq_length = tokenizer.model_max_length
@@ -426,7 +429,6 @@ def main():
             tokenized_datasets = tokenized_datasets.map(
                 group_tokens_and_pad,
                 batched=True,
-                batch_size=training_args.per_device_train_batch_size,
                 desc=f"Grouping texts in chunks of {max_seq_length}",
             )
     
