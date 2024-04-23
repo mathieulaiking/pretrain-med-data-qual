@@ -120,6 +120,10 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
+    streaming: bool = field(
+        default=None,
+        metadata={"help": "Whether to use the dataset in streaming"},
+    )
     mlm_probability: float = field(
         default=0.15, metadata={"help": "Ratio of tokens to mask for masked language modeling loss"}
     )
@@ -328,7 +332,8 @@ def main():
         # must not be batched as we want to check each example
         def metric_filter(examples, metric, lower_threshold, upper_threshold):
             return lower_threshold <= examples[metric] <= upper_threshold
-        tokenized_datasets = tokenized_datasets.filter(
+        # we do not filter the validation set
+        tokenized_datasets["train"] = tokenized_datasets["train"].filter(
             metric_filter,
             fn_kwargs={
                 "metric": data_args.filter_metric,
@@ -361,7 +366,11 @@ def main():
             [c for c in tokenized_datasets["validation"].column_names 
              if c not in columns_to_keep]
         )
-        
+
+    # Streaming needed for large datasets because we encountered NCCL timeout error
+    # but we stream after filtering because faster (and no error during filtering)
+    if data_args.streaming:
+        tokenized_datasets = tokenized_datasets.to_iterable_dataset()
     # Define the maximum sequence length
     if data_args.max_seq_length is None:
         max_seq_length = tokenizer.model_max_length
@@ -404,25 +413,33 @@ def main():
         return result
 
     with training_args.main_process_first(desc="grouping texts together"):
-        tokenized_datasets = tokenized_datasets.map(
-            group_tokens_and_pad,
-            batched=True,
-            batch_size=1024,
-            num_proc=data_args.preprocessing_num_workers,
-            load_from_cache_file=not data_args.overwrite_cache,
-            desc=f"Grouping texts in chunks of {max_seq_length}",
-        ) 
+        if not data_args.streaming:
+            tokenized_datasets = tokenized_datasets.map(
+                group_tokens_and_pad,
+                batched=True,
+                batch_size=1024,
+                num_proc=data_args.preprocessing_num_workers,
+                load_from_cache_file=not data_args.overwrite_cache,
+                desc=f"Grouping texts in chunks of {max_seq_length}",
+            ) 
+        else:
+            tokenized_datasets = tokenized_datasets.map(
+                group_tokens_and_pad,
+                batched=True,
+                batch_size=training_args.per_device_train_batch_size,
+                desc=f"Grouping texts in chunks of {max_seq_length}",
+            )
     
 
     if training_args.do_train:
         train_dataset = tokenized_datasets["train"]
-        if data_args.max_train_samples is not None:
+        if data_args.max_train_samples is not None and not data_args.streaming :
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
         eval_dataset = tokenized_datasets["validation"]
-        if data_args.max_eval_samples is not None:
+        if data_args.max_eval_samples is not None and not data_args.streaming :
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
             eval_dataset = eval_dataset.select(range(max_eval_samples))
 
