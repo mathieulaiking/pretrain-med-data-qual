@@ -429,21 +429,25 @@ def main():
             tokenized_datasets = tokenized_datasets.map(
                 group_tokens_and_pad,
                 batched=True,
-                desc=f"Grouping texts in chunks of {max_seq_length}",
             )
     
 
     if training_args.do_train:
         train_dataset = tokenized_datasets["train"]
-        if data_args.max_train_samples is not None and not data_args.streaming :
+        if data_args.max_train_samples is not None :
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            train_dataset = train_dataset.select(range(max_train_samples))
-
+            if not data_args.streaming : 
+                train_dataset = train_dataset.select(range(max_train_samples))
+            else : 
+                train_dataset = train_dataset.take(max_train_samples)
     if training_args.do_eval:
         eval_dataset = tokenized_datasets["validation"]
-        if data_args.max_eval_samples is not None and not data_args.streaming :
+        if data_args.max_eval_samples is not None :
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
+            if not data_args.streaming : 
+                eval_dataset = eval_dataset.select(range(max_eval_samples))
+            else : 
+                eval_dataset = eval_dataset.take(max_eval_samples)
 
         def preprocess_logits_for_metrics(logits, labels):
             if isinstance(logits, tuple):
