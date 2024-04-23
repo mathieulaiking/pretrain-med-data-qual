@@ -254,7 +254,6 @@ def parse_args():
         help="Project Name for Weights and Biases"
     )
 
-
     args = parser.parse_args()
 
     # Sanity checks
@@ -344,7 +343,6 @@ def main():
             args.model_name_or_path,
             from_tf=bool(".ckpt" in args.model_name_or_path),
             config=config,
-            low_cpu_mem_usage=args.low_cpu_mem_usage,
             trust_remote_code=args.trust_remote_code,
         )
     else:
