@@ -166,6 +166,9 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "Whether to return all the entity levels during evaluation or just the overall ones."},
     )
+    seqeval_path: Optional[str] = field(
+        default=None, metadata={"help": "path to the seqeval.py file (evaluate)"}
+    )
 
     def __post_init__(self):
         if self.dataset_name is None :
@@ -446,7 +449,7 @@ def main():
     data_collator = DataCollatorForTokenClassification(tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None)
 
     # Metrics
-    metric = evaluate.load("seqeval", cache_dir=model_args.cache_dir)
+    metric = evaluate.load(data_args.seqeval_path, cache_dir=model_args.cache_dir)
 
     def compute_metrics(p):
         predictions, labels = p
