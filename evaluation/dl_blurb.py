@@ -71,3 +71,6 @@ def main():
                 cache_dir=args.cache_dir,
                 num_proc=args.num_proc
             )
+
+if __name__ == "__main__":
+    main()
