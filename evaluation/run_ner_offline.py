@@ -73,7 +73,7 @@ class ModelArguments:
     )
     cache_dir: Optional[str] = field(
         default=None,
-        metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
+        metadata={"help": "path to cache dir where data is stored"},
     )
     ignore_mismatched_sizes: bool = field(
         default=False,
@@ -189,6 +189,10 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+
+    # Setup WANDB variables
+    os.environ["WANDB_MODE"] = "offline"
+    os.environ["WANDB_PROJECT"] = "blurb-ner-finetune"
 
     # Setup logging
     logging.basicConfig(
