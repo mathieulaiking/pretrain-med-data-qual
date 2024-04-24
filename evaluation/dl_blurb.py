@@ -52,6 +52,11 @@ def parse_args():
         type=str,
         help="number of processors to load dataset"
     )
+    parser.add_argument(
+        "--trust_remote_code",
+        action="store_true",
+        help="Needed for downloading EBM-PICO dataset"
+    )
     args = parser.parse_args()
     # Task sanity check
     if args.task is not None and args.task not in _DATASETS_TASKS_CONFIGS:
@@ -69,7 +74,8 @@ def main():
                 dataset,
                 name=config,
                 cache_dir=args.cache_dir,
-                num_proc=args.num_proc
+                num_proc=args.num_proc,
+                trust_remote_code=args.trust_remote_code,
             )
 
 if __name__ == "__main__":

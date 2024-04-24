@@ -5,6 +5,7 @@ wandb/*
 pretraining/*/
 data/*/
 **/.cache/
+**/cache
 slurm/*
 
 **.xml
