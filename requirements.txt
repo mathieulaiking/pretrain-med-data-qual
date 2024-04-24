@@ -6,3 +6,4 @@ datasets == 2.18.0
 evaluate == 0.4.1
 accelerate == 0.29.1
 scikit-learn == 1.4.1.post1
+seqeval == 1.2.2
