@@ -49,13 +49,8 @@ def parse_args():
     parser.add_argument(
         "--num_proc",
         default=None,
-        type=str,
+        type=int,
         help="number of processors to load dataset"
-    )
-    parser.add_argument(
-        "--trust_remote_code",
-        action="store_true",
-        help="Needed for downloading EBM-PICO dataset"
     )
     args = parser.parse_args()
     # Task sanity check
@@ -75,7 +70,6 @@ def main():
                 name=config,
                 cache_dir=args.cache_dir,
                 num_proc=args.num_proc,
-                trust_remote_code=args.trust_remote_code,
             )
 
 if __name__ == "__main__":
