@@ -20,14 +20,13 @@ import logging
 import os
 import random
 import sys
-import warnings
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import datasets
 import evaluate
 import numpy as np
-from datasets import Value, load_dataset
+from datasets import Value, load_dataset, load_from_disk
 
 import transformers
 from transformers import (
@@ -66,6 +65,12 @@ class DataTrainingArguments:
 
     dataset_path: Optional[str] = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
+    )
+    load_from_disk: bool = field(
+        default=None,
+        metadata={
+            "help": "Whether to load the dataset from disk (been saved using datasets.Dataset.save_to_disk function)"
+        },
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
@@ -177,7 +182,7 @@ class DataTrainingArguments:
             )
         },
     )
-    metric_name: Optional[str] = field(default=None, metadata={"help": "The metric to use for evaluation."})
+    metric_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"})
     train_file: Optional[str] = field(
         default=None, metadata={"help": "A csv or a json file containing the training data."}
     )
@@ -222,25 +227,6 @@ class ModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
-    model_revision: str = field(
-        default="main",
-        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
-    )
-    token: str = field(
-        default=None,
-        metadata={
-            "help": (
-                "The token to use as HTTP bearer authorization for remote files. If not specified, will use the token "
-                "generated when running `huggingface-cli login` (stored in `~/.huggingface`)."
-            )
-        },
-    )
-    use_auth_token: bool = field(
-        default=None,
-        metadata={
-            "help": "The `use_auth_token` argument is deprecated and will be removed in v4.34. Please use `token` instead."
-        },
-    )
     trust_remote_code: bool = field(
         default=False,
         metadata={
@@ -282,15 +268,6 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
-    if model_args.use_auth_token is not None:
-        warnings.warn(
-            "The `use_auth_token` argument is deprecated and will be removed in v4.34. Please use `token` instead.",
-            FutureWarning,
-        )
-        if model_args.token is not None:
-            raise ValueError("`token` and `use_auth_token` are both specified. Please set only the argument `token`.")
-        model_args.token = model_args.use_auth_token
 
     # Setup logging
     logging.basicConfig(
@@ -341,17 +318,18 @@ def main():
     # for the actual text value.
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.dataset_path is not None:
+    if data_args.dataset_path is not None and not data_args.load_from_disk:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
             data_args.dataset_path,
             data_args.dataset_config_name,
             cache_dir=model_args.cache_dir,
-            token=model_args.token,
         )
         # Try print some info about the dataset
         logger.info(f"Dataset loaded: {raw_datasets}")
         logger.info(raw_datasets)
+    elif data_args.load_from_disk:
+        raw_datasets = load_from_disk(data_args.dataset_path)
     else:
         # Loading a dataset from your local files.
         # CSV/JSON training and evaluation files are needed.
@@ -378,7 +356,6 @@ def main():
                 "csv",
                 data_files=data_files,
                 cache_dir=model_args.cache_dir,
-                token=model_args.token,
             )
         else:
             # Loading a dataset from local json files
@@ -386,7 +363,6 @@ def main():
                 "json",
                 data_files=data_files,
                 cache_dir=model_args.cache_dir,
-                token=model_args.token,
             )
 
     # See more about loading any type of standard or custom dataset at
@@ -487,8 +463,6 @@ def main():
         num_labels=num_labels,
         finetuning_task="text-classification",
         cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
 
@@ -506,8 +480,6 @@ def main():
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
-        revision=model_args.model_revision,
-        token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -515,8 +487,6 @@ def main():
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
@@ -625,26 +595,26 @@ def main():
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
-    if data_args.metric_name is not None:
+    if data_args.metric_path is not None:
         metric = (
-            evaluate.load(data_args.metric_name, config_name="multilabel", cache_dir=model_args.cache_dir)
+            evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.cache_dir)
             if is_multi_label
-            else evaluate.load(data_args.metric_name, cache_dir=model_args.cache_dir)
+            else evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
         )
-        logger.info(f"Using metric {data_args.metric_name} for evaluation.")
+        logger.info(f"Using metric {data_args.metric_path} for evaluation.")
     else:
         if is_regression:
             metric = evaluate.load("mse", cache_dir=model_args.cache_dir)
-            logger.info("Using mean squared error (mse) as regression score, you can use --metric_name to overwrite.")
+            logger.info("Using mean squared error (mse) as regression score, you can use --metric_path to overwrite.")
         else:
             if is_multi_label:
                 metric = evaluate.load("f1", config_name="multilabel", cache_dir=model_args.cache_dir)
                 logger.info(
-                    "Using multilabel F1 for multi-label classification task, you can use --metric_name to overwrite."
+                    "Using multilabel F1 for multi-label classification task, you can use --metric_path to overwrite."
                 )
             else:
                 metric = evaluate.load("accuracy", cache_dir=model_args.cache_dir)
-                logger.info("Using accuracy as classification score, you can use --metric_name to overwrite.")
+                logger.info("Using accuracy as classification score, you can use --metric_path to overwrite.")
 
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
@@ -740,17 +710,6 @@ def main():
                         item = label_list[item]
                         writer.write(f"{index}\t{item}\n")
         logger.info("Predict results saved at {}".format(output_predict_file))
-    kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "text-classification"}
-
-    if training_args.push_to_hub:
-        trainer.push_to_hub(**kwargs)
-    else:
-        trainer.create_model_card(**kwargs)
-
-
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
 
 
 if __name__ == "__main__":
