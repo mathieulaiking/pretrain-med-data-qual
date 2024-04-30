@@ -283,7 +283,7 @@ def main():
                 closest_year = take_closest(years, article["MedlineCitation"]["DateCompleted"]["Year"])
                 sjr = sjr_dict[issn][str(closest_year)]
             ## random assignment (for baseline comparison) using uniform distribution between 0 and 1
-            random_seed0 = random.random()
+            random_uniform = random.random()
 
             ## write output file and save metrics in list
             output_buffer.append({
@@ -291,7 +291,7 @@ def main():
                 "text":article["MedlineCitation"]["Article"]["ArticleTitle"]+ "\n" + article["MedlineCitation"]["Article"]["Abstract"]["AbstractText"],
                 "h-index":h_index,
                 "sjr":sjr,
-                "random_0":random_seed0,
+                "random":random_uniform,
             })
 
         # saving abstracts

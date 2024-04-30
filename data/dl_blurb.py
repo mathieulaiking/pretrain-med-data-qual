@@ -36,7 +36,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--cache_dir",
-        default="./cache",
+        default=".blurb_cache",
         type=str,
         help="Path to cache directory where datasets will be stored"
     )
@@ -65,6 +65,7 @@ def main():
         if args.task is not None and task != args.task:
             continue
         for dataset,config in datasets_configs:
+            print("Downloading dataset", dataset, "with config", config)
             datasets.load_dataset(
                 dataset,
                 name=config,
