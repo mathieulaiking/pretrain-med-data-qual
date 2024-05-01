@@ -328,7 +328,7 @@ def main():
         # Try print some info about the dataset
         logger.info(f"Dataset loaded: {raw_datasets}")
         logger.info(raw_datasets)
-    elif data_args.load_from_disk:
+    elif data_args.dataset_path is not None and data_args.load_from_disk:
         raw_datasets = load_from_disk(data_args.dataset_path)
     else:
         # Loading a dataset from your local files.
