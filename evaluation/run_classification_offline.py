@@ -20,13 +20,14 @@ import logging
 import os
 import random
 import sys
+import json
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import datasets
 import evaluate
 import numpy as np
-from datasets import Value, load_dataset, load_from_disk
+from datasets import Value, load_dataset, load_from_disk, disable_caching
 
 import transformers
 from transformers import (
@@ -183,6 +184,7 @@ class DataTrainingArguments:
         },
     )
     metric_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"})
+    pearsonr_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_pearsonr.py)"})
     train_file: Optional[str] = field(
         default=None, metadata={"help": "A csv or a json file containing the training data."}
     )
@@ -269,6 +271,7 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    disable_caching()
     # Setup WANDB variables
     os.environ["WANDB_MODE"] = "offline"
     if data_args.do_regression:
@@ -687,11 +690,14 @@ def main():
     if training_args.do_predict:
         logger.info("*** Predict ***")
         # Removing the `label` columns if exists because it might contains -1 and Trainer won't like that.
-        if "label" in predict_dataset.features:
-            predict_dataset = predict_dataset.remove_columns("label")
+        # if "label" in predict_dataset.features:
+        #     predict_dataset = predict_dataset.remove_columns("label")
         predictions = trainer.predict(predict_dataset, metric_key_prefix="predict").predictions
-        if is_regression:
+        if is_regression: # similarity task, compute pearson
+            pearsonr = evaluate.load(data_args.pearsonr_path, cache_dir=model_args.cache_dir)
             predictions = np.squeeze(predictions)
+            labels = predict_dataset["label"]
+            result = pearsonr.compute(predictions=predictions, references=labels)
         elif is_multi_label:
             # Convert logits to multi-hot encoding. We compare the logits to 0 instead of 0.5, because the sigmoid is not applied.
             # You can also pass `preprocess_logits_for_metrics=lambda logits, labels: nn.functional.sigmoid(logits)` to the Trainer
@@ -701,6 +707,7 @@ def main():
             predictions = np.argmax(predictions, axis=1)
         output_predict_file = os.path.join(training_args.output_dir, "predict_results.txt")
         if trainer.is_world_process_zero():
+            # save preds
             with open(output_predict_file, "w") as writer:
                 logger.info("***** Predict results *****")
                 writer.write("index\tprediction\n")
@@ -714,6 +721,9 @@ def main():
                     else:
                         item = label_list[item]
                         writer.write(f"{index}\t{item}\n")
+            # save pred results
+            with open(os.path.join(training_args.output_dir, "predict_results.json"),"w") as writer:
+                json.dump(result, writer)
         logger.info("Predict results saved at {}".format(output_predict_file))
 
 
