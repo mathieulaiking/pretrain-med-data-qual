@@ -269,6 +269,11 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Setup WANDB variables
+    os.environ["WANDB_MODE"] = "offline"
+    if data_args.do_regression:
+        os.environ["WANDB_PROJECT"] = "blurb-sent-sim-finetune"
+
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
