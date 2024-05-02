@@ -72,6 +72,8 @@ def main():
         "train_mse": train_mse,
         "test_mse": test_mse
     } | pearsonr_result
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir,exist_ok=True)
     with open(os.path.join(args.output_dir,"predict_results.json"),"w") as f:
         json.dump(result_dict,f)
     with open(os.path.join(args.output_dir,"sgd_regressor_model.pkl"),"wb") as f:
