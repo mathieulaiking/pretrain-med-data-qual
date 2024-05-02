@@ -1,3 +1,4 @@
+import os
 import json
 import pickle
 import argparse
@@ -11,6 +12,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Run sentence similarity')
     parser.add_argument('--model_path', type=str, default=None, help='path to the model')
     parser.add_argument('--biosses_path', type=str, default=None, help='path to biosses dataset (on disk)')
+    parser.add_argument('--pearsonr_path', type=str, default=None, help='path to evaluate pearsonr.py file')
     parser.add_argument('--output_dir', type=str, default=None, help='path to save the output files')
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     args = parser.parse_args()
@@ -27,11 +29,12 @@ _BEST_HYPERPARAMS = {'alpha': 0.0001,
 def main():
 
     args = parse_args()
-    # Loading Data and models
+    # Loading Data , models and metric
     biosses = load_from_disk(args.biosses_path)
     text_encoder = AutoModel.from_pretrained(args.model_path).to('cuda')
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     regressor = SGDRegressor(**_BEST_HYPERPARAMS, random_state=args.seed)
+    pearsonr = evaluate.load(args.pearsonr_path)
     # In BLURB paper (Gu et al.) they say they adopt the splits of the Peng et al. paper, 
     # which uses 80% train and 20% test , so we must concatenate train and validation : 
     biosses_train = concatenate_datasets((biosses["train"],biosses["validation"]),split="train")
@@ -60,7 +63,7 @@ def main():
     # Prediction
     y_pred = regressor.predict(X_pred)
     # Evaluation
-    pearsonr = evaluate.load("../evaluation/metrics/evaluate_pearsonr.py")
+    
     pearsonr_result = pearsonr.compute(predictions=y_pred,references=y_test)
     train_mse = mean_squared_error(y_train,regressor.predict(X_train))
     test_mse = mean_squared_error(y_test,y_pred)
@@ -69,9 +72,9 @@ def main():
         "train_mse": train_mse,
         "test_mse": test_mse
     } | pearsonr_result
-    with open(args.output_dir + "/results.json","w") as f:
+    with open(os.path.join(args.output_dir,"predict_results.json"),"w") as f:
         json.dump(result_dict,f)
-    with open(args.output_dir + "/sgd_regressor_model.pkl","wb") as f:
+    with open(os.path.join(args.output_dir,"sgd_regressor_model.pkl"),"wb") as f:
         pickle.dump(regressor,f)
 
 if __name__ == '__main__':
