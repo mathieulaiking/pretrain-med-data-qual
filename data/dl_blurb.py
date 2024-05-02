@@ -60,12 +60,12 @@ def parse_args():
 
 def _preprocess(ds:datasets.DatasetDict, num_proc:int):
     if ds["train"].info.dataset_name == "biosses":
-        ds=ds.map(
+        ds = ds.map(
             lambda examples: examples | {"annotator_avg": np.mean([examples[k] for k in examples if "annotator" in k],axis=0)},
             batched=True,
             remove_columns=[f"annotator_{x}" for x in "abcde"],
             num_proc=num_proc
-        )
+        ) 
     return ds
 
 def main():
