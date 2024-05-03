@@ -15,7 +15,7 @@
 # limitations under the License.
 """ Finetuning the library models for text classification."""
 # You can also adapt this script on your own text classification task. Pointers for this are left as comments.
-
+import json
 import logging
 import os
 import random
@@ -420,14 +420,11 @@ def main():
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
-        # Removing the `label` columns if exists because it might contains -1 and Trainer won't like that.
-        if "label" in predict_dataset.features:
-            predict_dataset = predict_dataset.remove_columns("label")
-        predictions = trainer.predict(predict_dataset, metric_key_prefix="predict").predictions
+        pred_output = trainer.predict(predict_dataset, metric_key_prefix="predict")
         # Convert logits to multi-hot encoding. We compare the logits to 0 instead of 0.5, because the sigmoid is not applied.
         # You can also pass `preprocess_logits_for_metrics=lambda logits, labels: nn.functional.sigmoid(logits)` to the Trainer
         # and set p > 0.5 below (less efficient in this case)
-        predictions = np.array([np.where(p > 0, 1, 0) for p in predictions])
+        predictions = np.array([np.where(p > 0, 1, 0) for p in pred_output.predictions])
         output_predict_file = os.path.join(training_args.output_dir, "predict_results.txt")
         if trainer.is_world_process_zero():
             # save preds
@@ -438,6 +435,9 @@ def main():
                     # recover from multi-hot encoding
                     item = [label_list[i] for i in range(len(item)) if item[i] == 1]
                     writer.write(f"{index}\t{item}\n")
+            # save metrics
+            with open(os.path.join(training_args.output_dir, "predict_results.json"), "w") as results_file:
+                json.dump(pred_output.metrics, results_file, indent=2)
         logger.info("Predict results saved at {}".format(output_predict_file))
 
 
