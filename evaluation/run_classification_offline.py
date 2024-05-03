@@ -20,14 +20,13 @@ import logging
 import os
 import random
 import sys
-import json
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import datasets
 import evaluate
 import numpy as np
-from datasets import Value, load_dataset, load_from_disk, disable_caching
+from datasets import load_dataset, load_from_disk, disable_caching
 
 import transformers
 from transformers import (
@@ -75,12 +74,6 @@ class DataTrainingArguments:
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
-    )
-    do_regression: bool = field(
-        default=None,
-        metadata={
-            "help": "Whether to do regression instead of classification. If None, will be inferred from the dataset."
-        },
     )
     text_column_names: Optional[str] = field(
         default=None,
@@ -184,26 +177,11 @@ class DataTrainingArguments:
         },
     )
     metric_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"})
-    pearsonr_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_pearsonr.py)"})
-    train_file: Optional[str] = field(
-        default=None, metadata={"help": "A csv or a json file containing the training data."}
-    )
-    validation_file: Optional[str] = field(
-        default=None, metadata={"help": "A csv or a json file containing the validation data."}
-    )
-    test_file: Optional[str] = field(default=None, metadata={"help": "A csv or a json file containing the test data."})
-
     def __post_init__(self):
         if self.dataset_path is None:
-            if self.train_file is None or self.validation_file is None:
-                raise ValueError(" training/validation file or a dataset name.")
-
-            train_extension = self.train_file.split(".")[-1]
-            assert train_extension in ["csv", "json"], "`train_file` should be a csv or a json file."
-            validation_extension = self.validation_file.split(".")[-1]
-            assert (
-                validation_extension == train_extension
-            ), "`validation_file` should have the same extension (csv or json) as `train_file`."
+            raise ValueError("You should specify a dataset path")
+        if self.metric_path is None:
+            raise ValueError("You should specify a metric path (f1 for multi_label classification)")
 
 
 @dataclass
@@ -271,11 +249,11 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Disable caching for avoiding evaluate cache errors when launching jobs
     disable_caching()
     # Setup WANDB variables
     os.environ["WANDB_MODE"] = "offline"
-    if data_args.do_regression:
-        os.environ["WANDB_PROJECT"] = "blurb-sent-sim-finetune"
+    os.environ["WANDB_PROJECT"] = "blurb-classification"
 
     # Setup logging
     logging.basicConfig(
@@ -338,41 +316,6 @@ def main():
         logger.info(raw_datasets)
     elif data_args.dataset_path is not None and data_args.load_from_disk:
         raw_datasets = load_from_disk(data_args.dataset_path)
-    else:
-        # Loading a dataset from your local files.
-        # CSV/JSON training and evaluation files are needed.
-        data_files = {"train": data_args.train_file, "validation": data_args.validation_file}
-
-        # Get the test dataset: you can provide your own CSV/JSON test file
-        if training_args.do_predict:
-            if data_args.test_file is not None:
-                train_extension = data_args.train_file.split(".")[-1]
-                test_extension = data_args.test_file.split(".")[-1]
-                assert (
-                    test_extension == train_extension
-                ), "`test_file` should have the same extension (csv or json) as `train_file`."
-                data_files["test"] = data_args.test_file
-            else:
-                raise ValueError("Need either a dataset name or a test file for `do_predict`.")
-
-        for key in data_files.keys():
-            logger.info(f"load a local file for {key}: {data_files[key]}")
-
-        if data_args.train_file.endswith(".csv"):
-            # Loading a dataset from local csv files
-            raw_datasets = load_dataset(
-                "csv",
-                data_files=data_files,
-                cache_dir=model_args.cache_dir,
-            )
-        else:
-            # Loading a dataset from local json files
-            raw_datasets = load_dataset(
-                "json",
-                data_files=data_files,
-                cache_dir=model_args.cache_dir,
-            )
-
     # See more about loading any type of standard or custom dataset at
     # https://huggingface.co/docs/datasets/loading_datasets.
 
@@ -408,60 +351,36 @@ def main():
 
     # Trying to have good defaults here, don't hesitate to tweak to your needs.
 
-    is_regression = (
-        raw_datasets["train"].features["label"].dtype in ["float32", "float64"]
-        if data_args.do_regression is None
-        else data_args.do_regression
-    )
 
     is_multi_label = False
-    if is_regression:
-        label_list = None
-        num_labels = 1
-        # regession requires float as label type, let's cast it if needed
-        for split in raw_datasets.keys():
-            if raw_datasets[split].features["label"].dtype not in ["float32", "float64"]:
+
+    if raw_datasets["train"].features["label"].dtype == "list":  # multi-label classification
+        is_multi_label = True
+        logger.info("Label type is list, doing multi-label classification")
+    # Trying to find the number of labels in a multi-label classification task
+    # We have to deal with common cases that labels appear in the training set but not in the validation/test set.
+    # So we build the label list from the union of labels in train/val/test.
+    label_list = get_label_list(raw_datasets, split="train")
+    for split in ["validation", "test"]:
+        if split in raw_datasets:
+            val_or_test_labels = get_label_list(raw_datasets, split=split)
+            diff = set(val_or_test_labels).difference(set(label_list))
+            if len(diff) > 0:
+                # add the labels that appear in val/test but not in train, throw a warning
                 logger.warning(
-                    f"Label type for {split} set to float32, was {raw_datasets[split].features['label'].dtype}"
+                    f"Labels {diff} in {split} set but not in training set, adding them to the label list"
                 )
-                features = raw_datasets[split].features
-                features.update({"label": Value("float32")})
-                try:
-                    raw_datasets[split] = raw_datasets[split].cast(features)
-                except TypeError as error:
-                    logger.error(
-                        f"Unable to cast {split} set to float32, please check the labels are correct, or maybe try with --do_regression=False"
-                    )
-                    raise error
+                label_list += list(diff)
+    # if label is -1, we throw a warning and remove it from the label list
+    for label in label_list:
+        if label == -1:
+            logger.warning("Label -1 found in label list, removing it.")
+            label_list.remove(label)
 
-    else:  # classification
-        if raw_datasets["train"].features["label"].dtype == "list":  # multi-label classification
-            is_multi_label = True
-            logger.info("Label type is list, doing multi-label classification")
-        # Trying to find the number of labels in a multi-label classification task
-        # We have to deal with common cases that labels appear in the training set but not in the validation/test set.
-        # So we build the label list from the union of labels in train/val/test.
-        label_list = get_label_list(raw_datasets, split="train")
-        for split in ["validation", "test"]:
-            if split in raw_datasets:
-                val_or_test_labels = get_label_list(raw_datasets, split=split)
-                diff = set(val_or_test_labels).difference(set(label_list))
-                if len(diff) > 0:
-                    # add the labels that appear in val/test but not in train, throw a warning
-                    logger.warning(
-                        f"Labels {diff} in {split} set but not in training set, adding them to the label list"
-                    )
-                    label_list += list(diff)
-        # if label is -1, we throw a warning and remove it from the label list
-        for label in label_list:
-            if label == -1:
-                logger.warning("Label -1 found in label list, removing it.")
-                label_list.remove(label)
-
-        label_list.sort()
-        num_labels = len(label_list)
-        if num_labels <= 1:
-            raise ValueError("You need more than one label to do classification.")
+    label_list.sort()
+    num_labels = len(label_list)
+    if num_labels <= 1:
+        raise ValueError("You need more than one label to do classification.")
 
     # Load pretrained model and tokenizer
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
@@ -474,10 +393,7 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
     )
 
-    if is_regression:
-        config.problem_type = "regression"
-        logger.info("setting problem type to regression")
-    elif is_multi_label:
+    if is_multi_label:
         config.problem_type = "multi_label_classification"
         logger.info("setting problem type to multi label classification")
     else:
@@ -508,7 +424,7 @@ def main():
 
     # for training ,we will update the config with label infos,
     # if do_train is not set, we will use the label infos in the config
-    if training_args.do_train and not is_regression:  # classification, training
+    if training_args.do_train:  # classification, training
         label_to_id = {v: i for i, v in enumerate(label_list)}
         # update config with label infos
         if model.config.label2id != label_to_id:
@@ -518,12 +434,10 @@ def main():
             )
         model.config.label2id = label_to_id
         model.config.id2label = {id: label for label, id in label_to_id.items()}
-    elif not is_regression:  # classification, but not training
+    else:  # classification, but not training
         logger.info("using label infos in the model config")
         logger.info("label2id: {}".format(model.config.label2id))
         label_to_id = model.config.label2id
-    else:  # regression
-        label_to_id = None
 
     if data_args.max_seq_length > tokenizer.model_max_length:
         logger.warning(
@@ -589,7 +503,7 @@ def main():
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
             eval_dataset = eval_dataset.select(range(max_eval_samples))
 
-    if training_args.do_predict or data_args.test_file is not None:
+    if training_args.do_predict :
         if "test" not in raw_datasets:
             raise ValueError("--do_predict requires a test dataset")
         predict_dataset = raw_datasets["test"]
@@ -603,33 +517,17 @@ def main():
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
-    if data_args.metric_path is not None:
-        metric = (
-            evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.cache_dir)
-            if is_multi_label
-            else evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
-        )
-        logger.info(f"Using metric {data_args.metric_path} for evaluation.")
-    else:
-        if is_regression:
-            metric = evaluate.load("mse", cache_dir=model_args.cache_dir)
-            logger.info("Using mean squared error (mse) as regression score, you can use --metric_path to overwrite.")
-        else:
-            if is_multi_label:
-                metric = evaluate.load("f1", config_name="multilabel", cache_dir=model_args.cache_dir)
-                logger.info(
-                    "Using multilabel F1 for multi-label classification task, you can use --metric_path to overwrite."
-                )
-            else:
-                metric = evaluate.load("accuracy", cache_dir=model_args.cache_dir)
-                logger.info("Using accuracy as classification score, you can use --metric_path to overwrite.")
+    metric = (
+        evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.cache_dir)
+        if is_multi_label
+        else evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
+    )
+    logger.info(f"Using metric {data_args.metric_path} for evaluation.")
+
 
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
-        if is_regression:
-            preds = np.squeeze(preds)
-            result = metric.compute(predictions=preds, references=p.label_ids)
-        elif is_multi_label:
+        if is_multi_label:
             preds = np.array([np.where(p > 0, 1, 0) for p in preds])  # convert logits to multi-hot encoding
             # Micro F1 is commonly used in multi-label classification
             result = metric.compute(predictions=preds, references=p.label_ids, average="micro")
@@ -693,12 +591,7 @@ def main():
         # if "label" in predict_dataset.features:
         #     predict_dataset = predict_dataset.remove_columns("label")
         predictions = trainer.predict(predict_dataset, metric_key_prefix="predict").predictions
-        if is_regression: # similarity task, compute pearson
-            pearsonr = evaluate.load(data_args.pearsonr_path, cache_dir=model_args.cache_dir)
-            predictions = np.squeeze(predictions)
-            labels = predict_dataset["label"]
-            result = pearsonr.compute(predictions=predictions, references=labels)
-        elif is_multi_label:
+        if is_multi_label:
             # Convert logits to multi-hot encoding. We compare the logits to 0 instead of 0.5, because the sigmoid is not applied.
             # You can also pass `preprocess_logits_for_metrics=lambda logits, labels: nn.functional.sigmoid(logits)` to the Trainer
             # and set p > 0.5 below (less efficient in this case)
@@ -712,18 +605,13 @@ def main():
                 logger.info("***** Predict results *****")
                 writer.write("index\tprediction\n")
                 for index, item in enumerate(predictions):
-                    if is_regression:
-                        writer.write(f"{index}\t{item:3.3f}\n")
-                    elif is_multi_label:
+                    if is_multi_label:
                         # recover from multi-hot encoding
                         item = [label_list[i] for i in range(len(item)) if item[i] == 1]
                         writer.write(f"{index}\t{item}\n")
                     else:
                         item = label_list[item]
                         writer.write(f"{index}\t{item}\n")
-            # save pred results
-            with open(os.path.join(training_args.output_dir, "predict_results.json"),"w") as writer:
-                json.dump(result, writer)
         logger.info("Predict results saved at {}".format(output_predict_file))
 
 
