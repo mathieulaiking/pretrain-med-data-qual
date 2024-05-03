@@ -75,39 +75,8 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    text_column_names: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": (
-                "The name of the text column in the input dataset or a CSV/JSON file. "
-                'If not specified, will use the "sentence" column for single/multi-label classification task.'
-            )
-        },
-    )
     text_column_delimiter: Optional[str] = field(
         default=" ", metadata={"help": "THe delimiter to use to join text columns into a single sentence."}
-    )
-    train_split_name: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": 'The name of the train split in the input dataset. If not specified, will use the "train" split when do_train is enabled'
-        },
-    )
-    validation_split_name: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": 'The name of the validation split in the input dataset. If not specified, will use the "validation" split when do_eval is enabled'
-        },
-    )
-    test_split_name: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": 'The name of the test split in the input dataset. If not specified, will use the "test" split when do_predict is enabled'
-        },
-    )
-    remove_splits: Optional[str] = field(
-        default=None,
-        metadata={"help": "The splits to remove from the dataset. Multiple splits should be separated by commas."},
     )
     remove_columns: Optional[str] = field(
         default=None,
@@ -148,33 +117,6 @@ class DataTrainingArguments:
     )
     shuffle_seed: int = field(
         default=42, metadata={"help": "Random seed that will be used to shuffle the train dataset."}
-    )
-    max_train_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of training examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_predict_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of prediction examples to this "
-                "value if set."
-            )
-        },
     )
     metric_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"})
     def __post_init__(self):
@@ -221,20 +163,6 @@ class ModelArguments:
         default=False,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
-
-
-def get_label_list(raw_dataset, split="train") -> List[str]:
-    """Get the list of labels from a multi-label dataset"""
-
-    if isinstance(raw_dataset[split]["label"][0], list):
-        label_list = [label for sample in raw_dataset[split]["label"] for label in sample]
-        label_list = list(set(label_list))
-    else:
-        label_list = raw_dataset[split].unique("label")
-    # we will treat the label list as a list of string instead of int, consistent with model.config.label2id
-    label_list = [str(label) for label in label_list]
-    return label_list
-
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -391,15 +319,8 @@ def main():
         return ids
 
     def preprocess_function(examples):
-        if data_args.text_column_names is not None:
-            text_column_names = data_args.text_column_names.split(",")
-            # join together text columns into "sentence" column
-            examples["sentence"] = examples[text_column_names[0]]
-            for column in text_column_names[1:]:
-                for i in range(len(examples[column])):
-                    examples["sentence"][i] += data_args.text_column_delimiter + examples[column][i]
         # Tokenize the texts
-        result = tokenizer(examples["sentence"], padding=padding, max_length=max_seq_length, truncation=True)
+        result = tokenizer(examples["text"], padding=padding, max_length=max_seq_length, truncation=True)
         if label_to_id is not None and "label" in examples:
             result["label"] = [multi_labels_to_ids(l) for l in examples["label"]]
         return result
@@ -420,9 +341,6 @@ def main():
         if data_args.shuffle_train_dataset:
             logger.info("Shuffling the training dataset")
             train_dataset = train_dataset.shuffle(seed=data_args.shuffle_seed)
-        if data_args.max_train_samples is not None:
-            max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
         if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:
@@ -434,18 +352,11 @@ def main():
         else:
             eval_dataset = raw_datasets["validation"]
 
-        if data_args.max_eval_samples is not None:
-            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
 
     if training_args.do_predict :
         if "test" not in raw_datasets:
             raise ValueError("--do_predict requires a test dataset")
         predict_dataset = raw_datasets["test"]
-        # remove label column if it exists
-        if data_args.max_predict_samples is not None:
-            max_predict_samples = min(len(predict_dataset), data_args.max_predict_samples)
-            predict_dataset = predict_dataset.select(range(max_predict_samples))
 
     # Log a few random samples from the training set:
     if training_args.do_train:
@@ -493,10 +404,7 @@ def main():
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         metrics = train_result.metrics
-        max_train_samples = (
-            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-        )
-        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+        metrics["train_samples"] = len(train_dataset)
         trainer.save_model()  # Saves the tokenizer too for easy upload
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -506,16 +414,15 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(eval_dataset=eval_dataset)
-        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
-        metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
+        metrics["eval_samples"] = len(eval_dataset)
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
         # Removing the `label` columns if exists because it might contains -1 and Trainer won't like that.
-        # if "label" in predict_dataset.features:
-        #     predict_dataset = predict_dataset.remove_columns("label")
+        if "label" in predict_dataset.features:
+            predict_dataset = predict_dataset.remove_columns("label")
         predictions = trainer.predict(predict_dataset, metric_key_prefix="predict").predictions
         # Convert logits to multi-hot encoding. We compare the logits to 0 instead of 0.5, because the sigmoid is not applied.
         # You can also pass `preprocess_logits_for_metrics=lambda logits, labels: nn.functional.sigmoid(logits)` to the Trainer
