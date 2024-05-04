@@ -63,7 +63,6 @@ def main():
     # Prediction
     y_pred = regressor.predict(X_pred)
     # Evaluation
-    
     pearsonr_result = pearsonr.compute(predictions=y_pred,references=y_test)
     train_mse = mean_squared_error(y_train,regressor.predict(X_train))
     test_mse = mean_squared_error(y_test,y_pred)

@@ -15,7 +15,7 @@
 # limitations under the License.
 """ Finetuning the library models for text classification."""
 # You can also adapt this script on your own text classification task. Pointers for this are left as comments.
-
+import json
 import logging
 import os
 import random
@@ -92,24 +92,6 @@ class DataTrainingArguments:
     )
     text_column_delimiter: Optional[str] = field(
         default=" ", metadata={"help": "THe delimiter to use to join text columns into a single sentence."}
-    )
-    train_split_name: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": 'The name of the train split in the input dataset. If not specified, will use the "train" split when do_train is enabled'
-        },
-    )
-    validation_split_name: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": 'The name of the validation split in the input dataset. If not specified, will use the "validation" split when do_eval is enabled'
-        },
-    )
-    test_split_name: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": 'The name of the test split in the input dataset. If not specified, will use the "test" split when do_predict is enabled'
-        },
     )
     remove_splits: Optional[str] = field(
         default=None,
@@ -259,7 +241,7 @@ def main():
     disable_caching()
     # Setup WANDB variables
     os.environ["WANDB_MODE"] = "offline"
-    os.environ["WANDB_PROJECT"] = "blurb-classification"
+    os.environ["WANDB_PROJECT"] = "blurb-qa"
 
     # Setup logging
     logging.basicConfig(
@@ -330,21 +312,6 @@ def main():
             logger.info(f"removing split {split}")
             raw_datasets.pop(split)
 
-    if data_args.train_split_name is not None:
-        logger.info(f"using {data_args.train_split_name} as train set")
-        raw_datasets["train"] = raw_datasets[data_args.train_split_name]
-        raw_datasets.pop(data_args.train_split_name)
-
-    if data_args.validation_split_name is not None:
-        logger.info(f"using {data_args.validation_split_name} as validation set")
-        raw_datasets["validation"] = raw_datasets[data_args.validation_split_name]
-        raw_datasets.pop(data_args.validation_split_name)
-
-    if data_args.test_split_name is not None:
-        logger.info(f"using {data_args.test_split_name} as test set")
-        raw_datasets["test"] = raw_datasets[data_args.test_split_name]
-        raw_datasets.pop(data_args.test_split_name)
-
     if data_args.remove_columns is not None:
         for split in raw_datasets.keys():
             for column in data_args.remove_columns.split(","):
@@ -357,12 +324,6 @@ def main():
 
     # Trying to have good defaults here, don't hesitate to tweak to your needs.
 
-
-    is_multi_label = False
-
-    if data_args.do_multi_label:  # multi-label classification
-        is_multi_label = True
-        logger.info("Label type is list, doing multi-label classification")
     # Trying to find the number of labels in a multi-label classification task
     # We have to deal with common cases that labels appear in the training set but not in the validation/test set.
     # So we build the label list from the union of labels in train/val/test.
@@ -399,12 +360,8 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
     )
 
-    if is_multi_label:
-        config.problem_type = "multi_label_classification"
-        logger.info("setting problem type to multi label classification")
-    else:
-        config.problem_type = "single_label_classification"
-        logger.info("setting problem type to single label classification")
+    config.problem_type = "single_label_classification"
+    logger.info("setting problem type to single label classification")
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
@@ -452,12 +409,6 @@ def main():
         )
     max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
 
-    def multi_labels_to_ids(labels: List[str]) -> List[float]:
-        ids = [0.0] * len(label_to_id)  # BCELoss requires float as target type
-        for label in labels:
-            ids[label_to_id[label]] = 1.0
-        return ids
-
     def preprocess_function(examples):
         if data_args.text_column_names is not None:
             text_column_names = data_args.text_column_names.split(",")
@@ -469,10 +420,7 @@ def main():
         # Tokenize the texts
         result = tokenizer(examples["sentence"], padding=padding, max_length=max_seq_length, truncation=True)
         if label_to_id is not None and "label" in examples:
-            if is_multi_label:
-                result["label"] = [multi_labels_to_ids(l) for l in examples["label"]]
-            else:
-                result["label"] = [(label_to_id[str(l)] if l != -1 else -1) for l in examples["label"]]
+            result["label"] = [(label_to_id[str(l)] if l != -1 else -1) for l in examples["label"]]
         return result
 
     # Running the preprocessing pipeline on all the datasets
@@ -523,23 +471,14 @@ def main():
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
-    metric = (
-        evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.cache_dir)
-        if is_multi_label
-        else evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
-    )
+    metric = evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
     logger.info(f"Using metric {data_args.metric_path} for evaluation.")
 
 
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
-        if is_multi_label:
-            preds = np.array([np.where(p > 0, 1, 0) for p in preds])  # convert logits to multi-hot encoding
-            # Micro F1 is commonly used in multi-label classification
-            result = metric.compute(predictions=preds, references=p.label_ids, average="micro")
-        else:
-            preds = np.argmax(preds, axis=1)
-            result = metric.compute(predictions=preds, references=p.label_ids)
+        preds = np.argmax(preds, axis=1)
+        result = metric.compute(predictions=preds, references=p.label_ids)
         if len(result) > 1:
             result["combined_score"] = np.mean(list(result.values())).item()
         return result
@@ -593,17 +532,8 @@ def main():
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
-        # Removing the `label` columns if exists because it might contains -1 and Trainer won't like that.
-        # if "label" in predict_dataset.features:
-        #     predict_dataset = predict_dataset.remove_columns("label")
-        predictions = trainer.predict(predict_dataset, metric_key_prefix="predict").predictions
-        if is_multi_label:
-            # Convert logits to multi-hot encoding. We compare the logits to 0 instead of 0.5, because the sigmoid is not applied.
-            # You can also pass `preprocess_logits_for_metrics=lambda logits, labels: nn.functional.sigmoid(logits)` to the Trainer
-            # and set p > 0.5 below (less efficient in this case)
-            predictions = np.array([np.where(p > 0, 1, 0) for p in predictions])
-        else:
-            predictions = np.argmax(predictions, axis=1)
+        pred_output = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(pred_output.predictions, axis=1)
         output_predict_file = os.path.join(training_args.output_dir, "predict_results.txt")
         if trainer.is_world_process_zero():
             # save preds
@@ -611,13 +541,11 @@ def main():
                 logger.info("***** Predict results *****")
                 writer.write("index\tprediction\n")
                 for index, item in enumerate(predictions):
-                    if is_multi_label:
-                        # recover from multi-hot encoding
-                        item = [label_list[i] for i in range(len(item)) if item[i] == 1]
-                        writer.write(f"{index}\t{item}\n")
-                    else:
-                        item = label_list[item]
-                        writer.write(f"{index}\t{item}\n")
+                    item = label_list[item]
+                    writer.write(f"{index}\t{item}\n")
+            # save metrics
+            with open(os.path.join(training_args.output_dir, "predict_results.json"), "w") as results_file:
+                json.dump(pred_output.metrics, results_file, indent=2)
         logger.info("Predict results saved at {}".format(output_predict_file))
 
 

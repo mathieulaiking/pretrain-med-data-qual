@@ -3,12 +3,15 @@ import datasets
 import numpy as np
 
 _DATASETS_TASKS_CONFIGS = {
-    "token_classification" : [
+    "ner" : [
         ("bigbio/blurb","bc5chem"),
         ("bigbio/blurb","bc5disease"),
         ("bigbio/blurb","bc2gm"),
         ("bigbio/blurb","jnlpba"),
         ("bigbio/blurb","ncbi_disease"),
+    ],
+
+    "pico":[
         ("bigbio/ebm_pico", None),
     ],
 
@@ -26,9 +29,9 @@ _DATASETS_TASKS_CONFIGS = {
         ("bigbio/hallmarks_of_cancer", None),
     ],
 
-    "question_answering" : [
-        ("bigbio/bioasq_task_b",None),
-        ("bigbio/pubmed_qa",None),
+    "qa" : [
+        ("bigbio/bioasq_task_b","bioasq_blurb_bigbio_qa"),
+        ("bigbio/pubmed_qa","pubmed_qa_labeled_fold0_bigbio_qa"),
     ]
 }
 
@@ -76,7 +79,7 @@ def main():
             continue
         for dataset,config in datasets_configs:
             # Download dataset
-            print("Downloading dataset", dataset, "with config", config)
+            print("Downloading dataset", dataset, "with config(s)", config)
             ds = datasets.load_dataset(
                 dataset,
                 name=config,
@@ -84,10 +87,10 @@ def main():
                 num_proc=args.num_proc,
             )
             # Preprocess dataset
-            preproc_ds = _preprocess(ds,args.num_proc)
+            preproc_ds = _preprocess(ds, args.num_proc)
             # Save on disk
             out_dir = dataset.split('/')[-1]
-            if config is not None:
+            if config is not None and args.task == "token_classification":
                 out_dir += f"_{config}"
             preproc_ds.save_to_disk(out_dir)
             
