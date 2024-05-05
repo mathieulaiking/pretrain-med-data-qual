@@ -22,7 +22,7 @@ _DATASETS_TASKS_CONFIGS = {
     ],
 
     "sentence_similarity" : [
-        ("bigbio/biosses", None),
+        ("bigbio/biosses", "biosses_bigbio_pairs"),
     ],
 
     "document_classification" : [
@@ -61,14 +61,20 @@ def parse_args():
         raise ValueError(f"Task {args.task} not found in available tasks, available tasks are: {_DATASETS_TASKS_CONFIGS.keys()}")
     return args
 
-def _preprocess(ds:datasets.DatasetDict, num_proc:int):
-    if ds["train"].info.dataset_name == "biosses":
-        ds = ds.map(
-            lambda examples: examples | {"annotator_avg": np.mean([examples[k] for k in examples if "annotator" in k],axis=0)},
-            batched=True,
-            remove_columns=[f"annotator_{x}" for x in "abcde"],
-            num_proc=num_proc
-        ) 
+def _preprocess(ds:datasets.DatasetDict,task, num_proc:int):
+    if task == "sentence_similarity": 
+        # In BLURB paper (Gu et al.) they say they adopt the splits of the Peng et al. paper, 
+        # which uses 80% train and 20% test , so we must concatenate train and validation : 
+        ds_train = datasets.concatenate_datasets((ds["train"],ds["validation"]),split="train")
+        ds = datasets.DatasetDict({"train":ds_train,"test":ds["test"]})
+    elif task == "qa":
+        def cast_label(examples):
+            examples["answer"] = [ ans_list[0] for ans_list in examples["answer"]]
+            return examples
+        ds = ds.map(cast_label,batched=True,num_proc=num_proc)
+        unique_answers = sorted(ds.unique('answer')["train"])
+        ds = ds.cast_column("answer", datasets.ClassLabel(num_classes=len(unique_answers), names=unique_answers))
+        ds = ds.remove_columns(["question_id","document_id","choices","type"])
     return ds
 
 def main():
@@ -87,7 +93,7 @@ def main():
                 num_proc=args.num_proc,
             )
             # Preprocess dataset
-            preproc_ds = _preprocess(ds, args.num_proc)
+            preproc_ds = _preprocess(ds, task, args.num_proc)
             # Save on disk
             out_dir = dataset.split('/')[-1]
             if config is not None and args.task == "token_classification":

@@ -6,7 +6,7 @@ import evaluate
 from transformers import AutoTokenizer, AutoModel
 from sklearn.linear_model import SGDRegressor
 from sklearn.metrics import mean_squared_error
-from datasets import load_from_disk, concatenate_datasets
+from datasets import load_from_disk
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Run sentence similarity')
@@ -35,13 +35,10 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     regressor = SGDRegressor(**_BEST_HYPERPARAMS, random_state=args.seed)
     pearsonr = evaluate.load(args.pearsonr_path)
-    # In BLURB paper (Gu et al.) they say they adopt the splits of the Peng et al. paper, 
-    # which uses 80% train and 20% test , so we must concatenate train and validation : 
-    biosses_train = concatenate_datasets((biosses["train"],biosses["validation"]),split="train")
-    # Preprocess dataset (Tokenization)
+    # Tokenization
     train_dataset = tokenizer(
-        text=biosses_train["text_1"],
-        text_pair=biosses_train["text_2"],
+        text=biosses["train"]["text_1"],
+        text_pair=biosses["train"]["text_2"],
         padding=True,
         return_tensors='pt'
     ).to('cuda')
@@ -51,13 +48,13 @@ def main():
         padding=True,
         return_tensors='pt'
     ).to('cuda')
-    # Encode text
+    # Get features (encode text with language model)
     X_train = text_encoder(**train_dataset).last_hidden_state[:,0,:] # (batch_size, sequence_length, hidden_size) take only first [CLS] token
     X_train = X_train.to('cpu').detach().numpy()
-    y_train = biosses_train["annotator_avg"]
-    X_pred = text_encoder(**test_dataset).last_hidden_state[:,0,:] # to be used for prediction that's why y_pred and not y_test
+    y_train = biosses["train"]["label"]
+    X_pred = text_encoder(**test_dataset).last_hidden_state[:,0,:] # to be used for prediction that's why X_pred and not X_test
     X_pred = X_pred.to('cpu').detach().numpy()
-    y_test = biosses["test"]["annotator_avg"]
+    y_test = biosses["test"]["label"]
     # Train regressor
     regressor.fit(X_train,y_train)
     # Prediction
