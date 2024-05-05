@@ -55,6 +55,12 @@ def parse_args():
         type=int,
         help="number of processors to load dataset"
     )
+    parser.add_argument(
+        "--bioasq_data_dir",
+        default=None,
+        type=str,
+        help="Path to BioASQ data directory, because must be downloaded yourself with login on bioasq site"
+    )
     args = parser.parse_args()
     # Task sanity check
     if args.task is not None and args.task not in _DATASETS_TASKS_CONFIGS:
@@ -91,6 +97,7 @@ def main():
                 name=config,
                 cache_dir=args.cache_dir,
                 num_proc=args.num_proc,
+                data_dir=args.bioasq_data_dir if dataset.startswith("bigbio/bioasq") else None,
             )
             # Preprocess dataset
             preproc_ds = _preprocess(ds, task, args.num_proc)
