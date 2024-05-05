@@ -72,12 +72,6 @@ class DataTrainingArguments:
             "help": "Whether to load the dataset from disk (been saved using datasets.Dataset.save_to_disk function)"
         },
     )
-    do_multi_label: bool = field(
-        default=None,
-        metadata={
-            "help": "Whether the dataset is multi-label or not. If not specified, will use the label type in the dataset."
-        },
-    )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
