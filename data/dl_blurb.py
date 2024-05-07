@@ -1,6 +1,5 @@
 import argparse
 import datasets
-import numpy as np
 
 _DATASETS_TASKS_CONFIGS = {
     "ner" : [
@@ -16,9 +15,9 @@ _DATASETS_TASKS_CONFIGS = {
     ],
 
     "relation_extraction" : [
-        ("bigbio/chemprot", None),
-        ("bigbio/ddi_corpus", None),
-        ("bigbio/gad", None),
+        ("bigbio/chemprot", "chemprot_bigbio_kb"),
+        ("bigbio/ddi_corpus", "ddi_corpus_bigbio_kb"),
+        ("bigbio/gad", "gad_blurb_bigbio_text"),
     ],
 
     "sentence_similarity" : [
@@ -59,7 +58,8 @@ def parse_args():
         "--bioasq_data_dir",
         default=None,
         type=str,
-        help="Path to BioASQ data directory, because must be downloaded yourself with login on bioasq site"
+        help=("Path to BioASQ data directory, because must be downloaded yourself with login on bioasq site," 
+        "must be absolute path, or it will try to search on the HuggingFace Hub")
     )
     args = parser.parse_args()
     # Task sanity check
@@ -81,6 +81,45 @@ def _preprocess(ds:datasets.DatasetDict,task, num_proc:int):
         unique_answers = sorted(ds.unique('answer')["train"])
         ds = ds.cast_column("answer", datasets.ClassLabel(num_classes=len(unique_answers), names=unique_answers))
         ds = ds.remove_columns(["question_id","document_id","choices","type"])
+    elif task == "relation_extraction":
+        def dummyfication(examples):
+            per_relation_id = []
+            per_relation_texts = []
+            per_relation_labels = []
+            for i, rel_list in enumerate(examples["relations"]):
+                text = examples["passages"][i][0]["text"][0]
+                for rel in rel_list :
+                    e1 = [e for e in examples['entities'][i] if e["id"] == rel["arg1_id"]][0]
+                    e2 = [e for e in examples['entities'][i] if e["id"] == rel["arg2_id"]][0]
+                    start1,end1= e1["offsets"][0]
+                    start2,end2 = e2["offsets"][0]
+                    # find closest points to extract the sentence
+                    begin = 0
+                    for k in range(min(start1,start2),0,-1):
+                        if text[k] in ['.','!','?']:
+                            begin = k+1 # to not have the point in the sentence we take next index
+                            break
+                    finish = len(text)-1
+                    for k in range(max(end1,end2),len(text)):
+                        if text[k] in ['.','!','?']:
+                            finish = k
+                            break
+                    # Dummify the text
+                    dummy1,dummy2 = '@'+e1["type"]+'$','@'+e2["type"]+'$'
+                    if start1 < start2:
+                        dummy_text = text[begin:start1] + dummy1 + text[end1:start2] + dummy2 + text[end2:finish]
+                    else:
+                        dummy_text = text[begin:start2] + dummy2 + text[end2:start1] + dummy1 + text[end1:finish]
+                    
+                    per_relation_id.append(examples["document_id"][i] + '_' + rel["id"])
+                    per_relation_texts.append(dummy_text)
+                    per_relation_labels.append(rel["type"])
+            return {"id":per_relation_id, "text":per_relation_texts, "label":per_relation_labels}
+        ds = ds.map(
+            dummyfication,
+            batched=True,
+            remove_columns=ds["train"].column_names
+        )
     return ds
 
 def main():
