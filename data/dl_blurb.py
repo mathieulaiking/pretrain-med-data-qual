@@ -146,7 +146,7 @@ def main():
             preproc_ds = _preprocess(ds, task, args.num_proc)
             # Save on disk
             out_dir = dataset.split('/')[-1]
-            if config is not None and args.task == "ner":
+            if task == "ner":
                 out_dir += f"_{config}"
             preproc_ds.save_to_disk(out_dir)
             
