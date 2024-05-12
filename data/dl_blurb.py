@@ -67,6 +67,45 @@ def parse_args():
         raise ValueError(f"Task {args.task} not found in available tasks, available tasks are: {_DATASETS_TASKS_CONFIGS.keys()}")
     return args
 
+def _cast_label(examples):
+            examples["answer"] = [ ans_list[0] for ans_list in examples["answer"]]
+            return examples
+
+def _dummyfication(examples):
+    per_relation_id = []
+    per_relation_texts = []
+    per_relation_labels = []
+    for i, rel_list in enumerate(examples["relations"]):
+        text = examples["passages"][i][0]["text"][0]
+        for rel in rel_list :
+            e1 = [e for e in examples['entities'][i] if e["id"] == rel["arg1_id"]][0]
+            e2 = [e for e in examples['entities'][i] if e["id"] == rel["arg2_id"]][0]
+            start1,end1= e1["offsets"][0]
+            start2,end2 = e2["offsets"][0]
+            # find closest points to extract the sentence
+            begin = 0
+            for k in range(min(start1,start2),0,-1):
+                if text[k] in ['.','!','?']:
+                    begin = k+1 # to not have the point in the sentence we take next index
+                    break
+            finish = len(text)-1
+            for k in range(max(end1,end2),len(text)):
+                if text[k] in ['.','!','?']:
+                    finish = k
+                    break
+            # Dummify the text
+            dummy1,dummy2 = '@'+e1["type"]+'$','@'+e2["type"]+'$'
+            if start1 < start2:
+                dummy_text = text[begin:start1] + dummy1 + text[end1:start2] + dummy2 + text[end2:finish]
+            else:
+                dummy_text = text[begin:start2] + dummy2 + text[end2:start1] + dummy1 + text[end1:finish]
+            
+            per_relation_id.append(examples["document_id"][i] + '_' + rel["id"])
+            per_relation_texts.append(dummy_text)
+            per_relation_labels.append(rel["type"])
+    return {"id":per_relation_id, "text":per_relation_texts, "label":per_relation_labels}
+
+
 def _preprocess(ds:datasets.DatasetDict,task, num_proc:int):
     if task == "sentence_similarity": 
         # In BLURB paper (Gu et al.) they say they adopt the splits of the Peng et al. paper, 
@@ -74,49 +113,13 @@ def _preprocess(ds:datasets.DatasetDict,task, num_proc:int):
         ds_train = datasets.concatenate_datasets((ds["train"],ds["validation"]),split="train")
         ds = datasets.DatasetDict({"train":ds_train,"test":ds["test"]})
     elif task == "qa":
-        def cast_label(examples):
-            examples["answer"] = [ ans_list[0] for ans_list in examples["answer"]]
-            return examples
-        ds = ds.map(cast_label,batched=True,num_proc=num_proc)
+        ds = ds.map(_cast_label,batched=True,num_proc=num_proc)
         unique_answers = sorted(ds.unique('answer')["train"])
         ds = ds.cast_column("answer", datasets.ClassLabel(num_classes=len(unique_answers), names=unique_answers))
         ds = ds.remove_columns(["question_id","document_id","choices","type"])
     elif task == "relation_extraction":
-        def dummyfication(examples):
-            per_relation_id = []
-            per_relation_texts = []
-            per_relation_labels = []
-            for i, rel_list in enumerate(examples["relations"]):
-                text = examples["passages"][i][0]["text"][0]
-                for rel in rel_list :
-                    e1 = [e for e in examples['entities'][i] if e["id"] == rel["arg1_id"]][0]
-                    e2 = [e for e in examples['entities'][i] if e["id"] == rel["arg2_id"]][0]
-                    start1,end1= e1["offsets"][0]
-                    start2,end2 = e2["offsets"][0]
-                    # find closest points to extract the sentence
-                    begin = 0
-                    for k in range(min(start1,start2),0,-1):
-                        if text[k] in ['.','!','?']:
-                            begin = k+1 # to not have the point in the sentence we take next index
-                            break
-                    finish = len(text)-1
-                    for k in range(max(end1,end2),len(text)):
-                        if text[k] in ['.','!','?']:
-                            finish = k
-                            break
-                    # Dummify the text
-                    dummy1,dummy2 = '@'+e1["type"]+'$','@'+e2["type"]+'$'
-                    if start1 < start2:
-                        dummy_text = text[begin:start1] + dummy1 + text[end1:start2] + dummy2 + text[end2:finish]
-                    else:
-                        dummy_text = text[begin:start2] + dummy2 + text[end2:start1] + dummy1 + text[end1:finish]
-                    
-                    per_relation_id.append(examples["document_id"][i] + '_' + rel["id"])
-                    per_relation_texts.append(dummy_text)
-                    per_relation_labels.append(rel["type"])
-            return {"id":per_relation_id, "text":per_relation_texts, "label":per_relation_labels}
         ds = ds.map(
-            dummyfication,
+            _dummyfication,
             batched=True,
             remove_columns=ds["train"].column_names
         )
@@ -137,6 +140,7 @@ def main():
                 cache_dir=args.cache_dir,
                 num_proc=args.num_proc,
                 data_dir=args.bioasq_data_dir if dataset.startswith("bigbio/bioasq") else None,
+                trust_remote_code=True if not dataset == "bigbio/ebm_pico" else None,
             )
             # Preprocess dataset
             preproc_ds = _preprocess(ds, task, args.num_proc)
