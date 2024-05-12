@@ -417,20 +417,35 @@ def main():
 
     with training_args.main_process_first(desc="grouping texts together"):
         if not data_args.streaming:
-            tokenized_datasets = tokenized_datasets.map(
-                group_tokens_and_pad,
-                batched=True,
-                batch_size=1024,
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc=f"Grouping texts in chunks of {max_seq_length}",
-            ) 
+            if training_args.do_train:
+                tokenized_datasets["train"] = tokenized_datasets["train"].map(
+                    group_tokens_and_pad,
+                    batched=True,
+                    batch_size=1024,
+                    num_proc=data_args.preprocessing_num_workers,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                    desc=f"Grouping texts in chunks of {max_seq_length}",
+                )
+            if training_args.do_eval:
+                tokenized_datasets["validation"] = tokenized_datasets["validation"].map(
+                    group_tokens_and_pad,
+                    batched=True,
+                    batch_size=1024,
+                    num_proc=data_args.preprocessing_num_workers,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                    desc=f"Grouping texts in chunks of {max_seq_length}",
+                )
         else:
-            tokenized_datasets = tokenized_datasets.map(
-                group_tokens_and_pad,
-                batched=True,
-            )
-    
+            if training_args.do_train:
+                tokenized_datasets["train"] = tokenized_datasets["train"].map(
+                    group_tokens_and_pad,
+                    batched=True,
+                )
+            if training_args.do_eval:
+                tokenized_datasets["validation"] = tokenized_datasets["validation"].map(
+                    group_tokens_and_pad,
+                    batched=True,
+                )
 
     if training_args.do_train:
         train_dataset = tokenized_datasets["train"]
