@@ -117,7 +117,7 @@ def _preprocess(ds:datasets.DatasetDict,task, num_proc:int):
         unique_answers = sorted(ds.unique('answer')["train"])
         ds = ds.cast_column("answer", datasets.ClassLabel(num_classes=len(unique_answers), names=unique_answers))
         ds = ds.remove_columns(["question_id","document_id","choices","type"])
-    elif task == "relation_extraction":
+    elif task == "relation_extraction" and "relations" in ds["train"].column_names:
         ds = ds.map(
             _dummyfication,
             batched=True,
@@ -146,7 +146,7 @@ def main():
             preproc_ds = _preprocess(ds, task, args.num_proc)
             # Save on disk
             out_dir = dataset.split('/')[-1]
-            if config is not None and args.task == "token_classification":
+            if config is not None and args.task == "ner":
                 out_dir += f"_{config}"
             preproc_ds.save_to_disk(out_dir)
             
