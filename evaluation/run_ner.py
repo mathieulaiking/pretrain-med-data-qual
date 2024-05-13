@@ -189,9 +189,7 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    
-    # We disable the cache for preventing errors with evaluate
-    disable_caching()
+
     
     # Setup WANDB variables
     os.environ["WANDB_MODE"] = "offline"
@@ -456,7 +454,10 @@ def main():
     data_collator = DataCollatorForTokenClassification(tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None)
 
     # Metrics
-    metric = evaluate.load(data_args.seqeval_path, cache_dir=model_args.cache_dir)
+    metric = evaluate.load(
+        data_args.seqeval_path, 
+        cache_dir=model_args.cache_dir
+    )
 
     def compute_metrics(p):
         predictions, labels = p
