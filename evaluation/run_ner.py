@@ -28,7 +28,7 @@ from typing import Optional
 import datasets
 import evaluate
 import numpy as np
-from datasets import ClassLabel, load_dataset, disable_caching
+from datasets import ClassLabel, load_dataset
 
 import transformers
 from transformers import (
@@ -78,6 +78,10 @@ class ModelArguments:
     ignore_mismatched_sizes: bool = field(
         default=False,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
+    )
+    evaluate_cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "path to cache dir where evaluate data will be stored"},
     )
 
 
@@ -456,7 +460,7 @@ def main():
     # Metrics
     metric = evaluate.load(
         data_args.seqeval_path, 
-        cache_dir=model_args.cache_dir
+        cache_dir=model_args.evaluate_cache_dir
     )
 
     def compute_metrics(p):
