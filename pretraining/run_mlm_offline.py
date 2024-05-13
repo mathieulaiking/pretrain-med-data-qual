@@ -77,6 +77,10 @@ class ModelArguments:
         default=None,
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
     )
+    evaluate_cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "cache dir for evaluate metric"},
+    )
     use_fast_tokenizer: bool = field(
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
@@ -470,7 +474,7 @@ def main():
                 logits = logits[0]
             return logits.argmax(dim=-1)
 
-        metric = evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
+        metric = evaluate.load(data_args.metric_path, cache_dir=model_args.evaluate_cache_dir)
 
         def compute_metrics(eval_preds):
             preds, labels = eval_preds
