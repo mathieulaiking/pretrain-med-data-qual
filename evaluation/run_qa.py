@@ -26,7 +26,7 @@ from typing import List, Optional
 import datasets
 import evaluate
 import numpy as np
-from datasets import load_dataset, load_from_disk, disable_caching
+from datasets import load_from_disk, disable_caching
 
 import transformers
 from transformers import (
@@ -64,16 +64,8 @@ class DataTrainingArguments:
     """
 
     dataset_path: Optional[str] = field(
-        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
-    )
-    load_from_disk: bool = field(
-        default=None,
-        metadata={
-            "help": "Whether to load the dataset from disk (been saved using datasets.Dataset.save_to_disk function)"
-        },
-    )
-    dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+        default=None, 
+        metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
     text_column_names: Optional[str] = field(
         default=None,
@@ -86,14 +78,6 @@ class DataTrainingArguments:
     )
     text_column_delimiter: Optional[str] = field(
         default=" ", metadata={"help": "THe delimiter to use to join text columns into a single sentence."}
-    )
-    remove_splits: Optional[str] = field(
-        default=None,
-        metadata={"help": "The splits to remove from the dataset. Multiple splits should be separated by commas."},
-    )
-    remove_columns: Optional[str] = field(
-        default=None,
-        metadata={"help": "The columns to remove from the dataset. Multiple columns should be separated by commas."},
     )
     label_column_name: Optional[str] = field(
         default=None,
@@ -113,9 +97,6 @@ class DataTrainingArguments:
             )
         },
     )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
-    )
     pad_to_max_length: bool = field(
         default=True,
         metadata={
@@ -125,40 +106,10 @@ class DataTrainingArguments:
             )
         },
     )
-    shuffle_train_dataset: bool = field(
-        default=False, metadata={"help": "Whether to shuffle the train dataset or not."}
+    metric_path: Optional[str] = field(
+        default=None, 
+        metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"}
     )
-    shuffle_seed: int = field(
-        default=42, metadata={"help": "Random seed that will be used to shuffle the train dataset."}
-    )
-    max_train_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of training examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_predict_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of prediction examples to this "
-                "value if set."
-            )
-        },
-    )
-    metric_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"})
     def __post_init__(self):
         if self.dataset_path is None:
             raise ValueError("You should specify a dataset path")
@@ -175,12 +126,6 @@ class ModelArguments:
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
     cache_dir: Optional[str] = field(
         default=None,
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
@@ -188,10 +133,6 @@ class ModelArguments:
     evaluate_cache_dir: Optional[str] = field(
         default=None,
         metadata={"help": "cache dir for evaluate metric"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
     trust_remote_code: bool = field(
         default=False,
@@ -283,38 +224,12 @@ def main():
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
-
-    # Get the datasets: you can either provide your own CSV/JSON training and evaluation files, or specify a dataset name
-    # to load from huggingface/datasets. In ether case, you can specify a the key of the column(s) containing the text and
-    # the key of the column containing the label. If multiple columns are specified for the text, they will be joined together
-    # for the actual text value.
-    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
-    # download the dataset.
-    if data_args.dataset_path is not None and not data_args.load_from_disk:
-        # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset(
-            data_args.dataset_path,
-            data_args.dataset_config_name,
-            cache_dir=model_args.cache_dir,
-        )
-        # Try print some info about the dataset
-        logger.info(f"Dataset loaded: {raw_datasets}")
-        logger.info(raw_datasets)
-    elif data_args.dataset_path is not None and data_args.load_from_disk:
-        raw_datasets = load_from_disk(data_args.dataset_path)
+    raw_datasets = load_from_disk(data_args.dataset_path)
+    # Try print some info about the dataset
+    logger.info(f"Dataset loaded: {raw_datasets}")
+    logger.info(raw_datasets)
     # See more about loading any type of standard or custom dataset at
     # https://huggingface.co/docs/datasets/loading_datasets.
-
-    if data_args.remove_splits is not None:
-        for split in data_args.remove_splits.split(","):
-            logger.info(f"removing split {split}")
-            raw_datasets.pop(split)
-
-    if data_args.remove_columns is not None:
-        for split in raw_datasets.keys():
-            for column in data_args.remove_columns.split(","):
-                logger.info(f"removing column {column} from split {split}")
-                raw_datasets[split] = raw_datasets[split].remove_columns(column)
 
     if data_args.label_column_name is not None and data_args.label_column_name != "label":
         for key in raw_datasets.keys():
@@ -351,7 +266,7 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+        model_args.model_name_or_path,
         num_labels=num_labels,
         finetuning_task="text-classification",
         cache_dir=model_args.cache_dir,
@@ -362,9 +277,9 @@ def main():
     logger.info("setting problem type to single label classification")
 
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+        model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
+        use_fast=True,
         trust_remote_code=model_args.trust_remote_code,
     )
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -426,7 +341,6 @@ def main():
         raw_datasets = raw_datasets.map(
             preprocess_function,
             batched=True,
-            load_from_cache_file=not data_args.overwrite_cache,
             desc="Running tokenizer on dataset",
         )
 
@@ -434,12 +348,6 @@ def main():
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset.")
         train_dataset = raw_datasets["train"]
-        if data_args.shuffle_train_dataset:
-            logger.info("Shuffling the training dataset")
-            train_dataset = train_dataset.shuffle(seed=data_args.shuffle_seed)
-        if data_args.max_train_samples is not None:
-            max_train_samples = min(len(train_dataset), data_args.max_train_samples)
-            train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
         if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:
@@ -451,18 +359,10 @@ def main():
         else:
             eval_dataset = raw_datasets["validation"]
 
-        if data_args.max_eval_samples is not None:
-            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
-
     if training_args.do_predict :
         if "test" not in raw_datasets:
             raise ValueError("--do_predict requires a test dataset")
         predict_dataset = raw_datasets["test"]
-        # remove label column if it exists
-        if data_args.max_predict_samples is not None:
-            max_predict_samples = min(len(predict_dataset), data_args.max_predict_samples)
-            predict_dataset = predict_dataset.select(range(max_predict_samples))
 
     # Log a few random samples from the training set:
     if training_args.do_train:
@@ -510,10 +410,6 @@ def main():
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         metrics = train_result.metrics
-        max_train_samples = (
-            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-        )
-        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
         trainer.save_model()  # Saves the tokenizer too for easy upload
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -523,8 +419,6 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(eval_dataset=eval_dataset)
-        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
-        metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
