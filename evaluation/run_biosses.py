@@ -5,7 +5,7 @@ import argparse
 import evaluate
 from transformers import AutoTokenizer, AutoModel
 from sklearn.linear_model import SGDRegressor
-from sklearn.metrics import mean_squared_error
+# from sklearn.metrics import mean_squared_error
 from datasets import load_from_disk
 
 def parse_args():
@@ -14,6 +14,7 @@ def parse_args():
     parser.add_argument('--biosses_path', type=str, default=None, help='path to biosses dataset (on disk)')
     parser.add_argument('--pearsonr_path', type=str, default=None, help='path to evaluate pearsonr.py file')
     parser.add_argument('--output_dir', type=str, default=None, help='path to save the output files')
+    parser.add_argument('--evaluate_cache_dir', type=str, default=None, help='cache dir for evaluate')
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     args = parser.parse_args()
     return args
@@ -34,7 +35,7 @@ def main():
     text_encoder = AutoModel.from_pretrained(args.model_path).to('cuda')
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     regressor = SGDRegressor(**_BEST_HYPERPARAMS, random_state=args.seed)
-    pearsonr = evaluate.load(args.pearsonr_path)
+    pearsonr = evaluate.load(args.pearsonr_path, cache_dir=args.evaluate_cache_dir)
     # Tokenization
     train_dataset = tokenizer(
         text=biosses["train"]["text_1"],
@@ -48,10 +49,11 @@ def main():
         padding=True,
         return_tensors='pt'
     ).to('cuda')
-    # Get features (encode text with language model)
+    # Encode training tokens and get labels
     X_train = text_encoder(**train_dataset).last_hidden_state[:,0,:] # (batch_size, sequence_length, hidden_size) take only first [CLS] token
     X_train = X_train.to('cpu').detach().numpy()
     y_train = biosses["train"]["label"]
+    # Encode prediction tokens and get test labels
     X_pred = text_encoder(**test_dataset).last_hidden_state[:,0,:] # to be used for prediction that's why X_pred and not X_test
     X_pred = X_pred.to('cpu').detach().numpy()
     y_test = biosses["test"]["label"]
@@ -61,13 +63,14 @@ def main():
     y_pred = regressor.predict(X_pred)
     # Evaluation
     pearsonr_result = pearsonr.compute(predictions=y_pred,references=y_test)
-    train_mse = mean_squared_error(y_train,regressor.predict(X_train))
-    test_mse = mean_squared_error(y_test,y_pred)
+    # train_mse = mean_squared_error(y_train,regressor.predict(X_train))
+    # test_mse = mean_squared_error(y_test,y_pred)
     # Save results and model
-    result_dict = {
-        "train_mse": train_mse,
-        "test_mse": test_mse
-    } | pearsonr_result
+    # result_dict = {
+    #     "train_mse": train_mse,
+    #     "test_mse": test_mse
+    # } | pearsonr_result
+    result_dict = pearsonr_result
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir,exist_ok=True)
     with open(os.path.join(args.output_dir,"predict_results.json"),"w") as f:
