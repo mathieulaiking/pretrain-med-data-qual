@@ -163,6 +163,10 @@ class ModelArguments:
         default=False,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
+    evaluate_cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "cache for evaluate "},
+    )
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -363,7 +367,7 @@ def main():
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
-    metric = evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.cache_dir)
+    metric = evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.evaluate_cache_dir)
     logger.info(f"Using metric {data_args.metric_path} for evaluation.")
 
     def compute_metrics(p: EvalPrediction):
