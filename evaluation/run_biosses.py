@@ -23,7 +23,7 @@ def parse_args():
 _BEST_HYPERPARAMS = {'alpha': 0.0001,
     'eta0': 0.001,
     'loss': 'squared_error',
-    'max_iter': 20,
+    'max_iter': 60,
     'penalty': 'l2'
 }
 

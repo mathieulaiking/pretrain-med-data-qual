@@ -185,6 +185,10 @@ class ModelArguments:
         default=None,
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
     )
+    evaluate_cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "cache dir for evaluate metric"},
+    )
     use_fast_tokenizer: bool = field(
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
@@ -465,7 +469,7 @@ def main():
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
-    metric = evaluate.load(data_args.metric_path, cache_dir=model_args.cache_dir)
+    metric = evaluate.load(data_args.metric_path, cache_dir=model_args.evaluate_cache_dir)
     logger.info(f"Using metric {data_args.metric_path} for evaluation.")
 
 
