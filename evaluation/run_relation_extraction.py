@@ -26,7 +26,7 @@ from typing import List, Optional
 import datasets
 import evaluate
 import numpy as np
-from datasets import load_dataset, load_from_disk, disable_caching
+from datasets import load_from_disk, disable_caching
 
 import transformers
 from transformers import (
@@ -64,23 +64,20 @@ class DataTrainingArguments:
     """
 
     dataset_path: Optional[str] = field(
-        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
+        default=None, 
+        metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
-    load_from_disk: bool = field(
+    text_column_names: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Whether to load the dataset from disk (been saved using datasets.Dataset.save_to_disk function)"
+            "help": (
+                "The name of the text column in the input dataset or a CSV/JSON file. "
+                'If not specified, will use the "sentence" column for single/multi-label classification task.'
+            )
         },
-    )
-    dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
     text_column_delimiter: Optional[str] = field(
         default=" ", metadata={"help": "THe delimiter to use to join text columns into a single sentence."}
-    )
-    remove_columns: Optional[str] = field(
-        default=None,
-        metadata={"help": "The columns to remove from the dataset. Multiple columns should be separated by commas."},
     )
     label_column_name: Optional[str] = field(
         default=None,
@@ -100,9 +97,6 @@ class DataTrainingArguments:
             )
         },
     )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
-    )
     pad_to_max_length: bool = field(
         default=True,
         metadata={
@@ -112,13 +106,10 @@ class DataTrainingArguments:
             )
         },
     )
-    shuffle_train_dataset: bool = field(
-        default=False, metadata={"help": "Whether to shuffle the train dataset or not."}
+    metric_path: Optional[str] = field(
+        default=None, 
+        metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"}
     )
-    shuffle_seed: int = field(
-        default=42, metadata={"help": "Random seed that will be used to shuffle the train dataset."}
-    )
-    metric_path: Optional[str] = field(default=None, metadata={"help": "path to evaluate metric file (ex: custom/path/to/evaluate_mse.py)"})
     def __post_init__(self):
         if self.dataset_path is None:
             raise ValueError("You should specify a dataset path")
@@ -135,19 +126,13 @@ class ModelArguments:
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
     cache_dir: Optional[str] = field(
         default=None,
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
     )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    evaluate_cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "cache dir for evaluate metric"},
     )
     trust_remote_code: bool = field(
         default=False,
@@ -163,6 +148,20 @@ class ModelArguments:
         default=False,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
+
+
+def get_label_list(raw_dataset, split="train") -> List[str]:
+    """Get the list of labels from a multi-label dataset"""
+
+    if isinstance(raw_dataset[split]["label"][0], list):
+        label_list = [label for sample in raw_dataset[split]["label"] for label in sample]
+        label_list = list(set(label_list))
+    else:
+        label_list = raw_dataset[split].unique("label")
+    # we will treat the label list as a list of string instead of int, consistent with model.config.label2id
+    label_list = [str(label) for label in label_list]
+    return label_list
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -181,7 +180,7 @@ def main():
     disable_caching()
     # Setup WANDB variables
     os.environ["WANDB_MODE"] = "offline"
-    os.environ["WANDB_PROJECT"] = "blurb-classification"
+    os.environ["WANDB_PROJECT"] = "blurb-rel-ext"
 
     # Setup logging
     logging.basicConfig(
@@ -225,35 +224,40 @@ def main():
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
-
-    # Get the datasets
-    if data_args.dataset_path is not None and not data_args.load_from_disk:
-        raw_datasets = load_dataset(
-            data_args.dataset_path,
-            data_args.dataset_config_name,
-            cache_dir=model_args.cache_dir,
-        )
-        # Try print some info about the dataset
-        logger.info(f"Dataset loaded: {raw_datasets}")
-        logger.info(raw_datasets)
-    elif data_args.dataset_path is not None and data_args.load_from_disk:
-        raw_datasets = load_from_disk(data_args.dataset_path)
-
-    if data_args.remove_columns is not None:
-        for split in raw_datasets.keys():
-            for column in data_args.remove_columns.split(","):
-                logger.info(f"removing column {column} from split {split}")
-                raw_datasets[split] = raw_datasets[split].remove_columns(column)
+    raw_datasets = load_from_disk(data_args.dataset_path)
+    # Try print some info about the dataset
+    logger.info(f"Dataset loaded: {raw_datasets}")
+    logger.info(raw_datasets)
+    # See more about loading any type of standard or custom dataset at
+    # https://huggingface.co/docs/datasets/loading_datasets.
 
     if data_args.label_column_name is not None and data_args.label_column_name != "label":
         for key in raw_datasets.keys():
             raw_datasets[key] = raw_datasets[key].rename_column(data_args.label_column_name, "label")
 
-    logger.info("Label type is list, doing multi-label classification")
+    # Trying to have good defaults here, don't hesitate to tweak to your needs.
+
     # Trying to find the number of labels in a multi-label classification task
     # We have to deal with common cases that labels appear in the training set but not in the validation/test set.
     # So we build the label list from the union of labels in train/val/test.
-    label_list = raw_datasets["train"].features["label"][0].names
+    label_list = get_label_list(raw_datasets, split="train")
+    for split in ["validation", "test"]:
+        if split in raw_datasets:
+            val_or_test_labels = get_label_list(raw_datasets, split=split)
+            diff = set(val_or_test_labels).difference(set(label_list))
+            if len(diff) > 0:
+                # add the labels that appear in val/test but not in train, throw a warning
+                logger.warning(
+                    f"Labels {diff} in {split} set but not in training set, adding them to the label list"
+                )
+                label_list += list(diff)
+    # if label is -1, we throw a warning and remove it from the label list
+    for label in label_list:
+        if label == -1:
+            logger.warning("Label -1 found in label list, removing it.")
+            label_list.remove(label)
+
+    label_list.sort()
     num_labels = len(label_list)
     if num_labels <= 1:
         raise ValueError("You need more than one label to do classification.")
@@ -262,20 +266,20 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+        model_args.model_name_or_path,
         num_labels=num_labels,
         finetuning_task="text-classification",
         cache_dir=model_args.cache_dir,
         trust_remote_code=model_args.trust_remote_code,
     )
 
-    config.problem_type = "multi_label_classification"
-    logger.info("setting problem type to multi label classification")
+    config.problem_type = "single_label_classification"
+    logger.info("setting problem type to single label classification")
 
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+        model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
+        use_fast=True,
         trust_remote_code=model_args.trust_remote_code,
     )
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -298,6 +302,12 @@ def main():
     # if do_train is not set, we will use the label infos in the config
     if training_args.do_train:  # classification, training
         label_to_id = {v: i for i, v in enumerate(label_list)}
+        # update config with label infos
+        if model.config.label2id != label_to_id:
+            logger.warning(
+                "The label2id key in the model config.json is not equal to the label2id key of this "
+                "run. You can ignore this if you are doing finetuning."
+            )
         model.config.label2id = label_to_id
         model.config.id2label = {id: label for label, id in label_to_id.items()}
     else:  # classification, but not training
@@ -312,17 +322,18 @@ def main():
         )
     max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
 
-    def multi_labels_to_ids(labels: List[str]) -> List[float]:
-        ids = [0.0] * len(label_to_id)  # BCELoss requires float as target type
-        for label in labels:
-            ids[label] = 1.0 # label is already an index
-        return ids
-
     def preprocess_function(examples):
+        if data_args.text_column_names is not None:
+            text_column_names = data_args.text_column_names.split(",")
+            # join together text columns into "sentence" column
+            examples["sentence"] = examples[text_column_names[0]]
+            for column in text_column_names[1:]:
+                for i in range(len(examples[column])):
+                    examples["sentence"][i] += data_args.text_column_delimiter + examples[column][i]
         # Tokenize the texts
-        result = tokenizer(examples["text"], padding=padding, max_length=max_seq_length, truncation=True)
+        result = tokenizer(examples["sentence"], padding=padding, max_length=max_seq_length, truncation=True)
         if label_to_id is not None and "label" in examples:
-            result["label"] = [multi_labels_to_ids(l) for l in examples["label"]]
+            result["label"] = [(label_to_id[str(l)] if l != -1 else -1) for l in examples["label"]]
         return result
 
     # Running the preprocessing pipeline on all the datasets
@@ -330,7 +341,6 @@ def main():
         raw_datasets = raw_datasets.map(
             preprocess_function,
             batched=True,
-            load_from_cache_file=not data_args.overwrite_cache,
             desc="Running tokenizer on dataset",
         )
 
@@ -338,9 +348,6 @@ def main():
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset.")
         train_dataset = raw_datasets["train"]
-        if data_args.shuffle_train_dataset:
-            logger.info("Shuffling the training dataset")
-            train_dataset = train_dataset.shuffle(seed=data_args.shuffle_seed)
 
     if training_args.do_eval:
         if "validation" not in raw_datasets and "validation_matched" not in raw_datasets:
@@ -352,7 +359,6 @@ def main():
         else:
             eval_dataset = raw_datasets["validation"]
 
-
     if training_args.do_predict :
         if "test" not in raw_datasets:
             raise ValueError("--do_predict requires a test dataset")
@@ -363,14 +369,14 @@ def main():
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
-    metric = evaluate.load(data_args.metric_path, config_name="multilabel", cache_dir=model_args.cache_dir)
+    metric = evaluate.load(data_args.metric_path, cache_dir=model_args.evaluate_cache_dir)
     logger.info(f"Using metric {data_args.metric_path} for evaluation.")
+
 
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
-        preds = np.array([np.where(p > 0, 1, 0) for p in preds])  # convert logits to multi-hot encoding
-        # Micro F1 is commonly used in multi-label classification
-        result = metric.compute(predictions=preds, references=p.label_ids, average="micro")
+        preds = np.argmax(preds, axis=1)
+        result = metric.compute(predictions=preds, references=p.label_ids)
         if len(result) > 1:
             result["combined_score"] = np.mean(list(result.values())).item()
         return result
@@ -404,7 +410,6 @@ def main():
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         metrics = train_result.metrics
-        metrics["train_samples"] = len(train_dataset)
         trainer.save_model()  # Saves the tokenizer too for easy upload
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -414,17 +419,13 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(eval_dataset=eval_dataset)
-        metrics["eval_samples"] = len(eval_dataset)
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
     if training_args.do_predict:
         logger.info("*** Predict ***")
         pred_output = trainer.predict(predict_dataset, metric_key_prefix="predict")
-        # Convert logits to multi-hot encoding. We compare the logits to 0 instead of 0.5, because the sigmoid is not applied.
-        # You can also pass `preprocess_logits_for_metrics=lambda logits, labels: nn.functional.sigmoid(logits)` to the Trainer
-        # and set p > 0.5 below (less efficient in this case)
-        predictions = np.array([np.where(p > 0, 1, 0) for p in pred_output.predictions])
+        predictions = np.argmax(pred_output.predictions, axis=1)
         output_predict_file = os.path.join(training_args.output_dir, "predict_results.txt")
         if trainer.is_world_process_zero():
             # save preds
@@ -432,8 +433,7 @@ def main():
                 logger.info("***** Predict results *****")
                 writer.write("index\tprediction\n")
                 for index, item in enumerate(predictions):
-                    # recover from multi-hot encoding
-                    item = [label_list[i] for i in range(len(item)) if item[i] == 1]
+                    item = label_list[item]
                     writer.write(f"{index}\t{item}\n")
             # save metrics
             with open(os.path.join(training_args.output_dir, "predict_results.json"), "w") as results_file:
