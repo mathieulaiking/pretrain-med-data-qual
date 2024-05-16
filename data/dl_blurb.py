@@ -123,6 +123,10 @@ def _preprocess(ds:datasets.DatasetDict,task, num_proc:int):
             batched=True,
             remove_columns=ds["train"].column_names
         )
+    elif task == "relation_extraction": # gad corpus
+        ds = ds.map(lambda x: {"labels":[int(ll[0]) for ll in x]}, input_columns="labels", batched=True)
+        ds = ds.rename_column("labels","label")
+        ds = ds.cast_column("label",datasets.ClassLabel(num_classes=2, names=['no_relation', 'gene-disease_relation']))
     return ds
 
 def main():
