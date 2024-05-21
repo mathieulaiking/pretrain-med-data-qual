@@ -12,6 +12,7 @@ slurm/*
 **.xml
 **.pyc
 **.png
+**.tex
 
 **/core-*
 **/tmp*
